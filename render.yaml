@@ -1,0 +1,21 @@
+# Render.com blueprint. Push to GitHub, then in Render: New → Blueprint → pick this repo.
+# The server serves both the API and the built frontend, so one service is the whole site.
+services:
+  - type: web
+    name: ars
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      # Optional server-side default credentials. Leave unset for a "bring your own key"
+      # deployment — users enter a provider + key in the UI. Set these only if you want
+      # the "默认（服务器 .env）" option to work for everyone.
+      - key: ANTHROPIC_AUTH_TOKEN
+        sync: false
+      - key: ANTHROPIC_BASE_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ARS_MODEL
+        value: claude-opus-4-8

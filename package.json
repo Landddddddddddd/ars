@@ -1,0 +1,29 @@
+{
+  "name": "ars",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ARS (Academic-Research-Skills) — a multi-agent academic research framework, from idea to publication.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "check": "tsx apps/server/src/preflight.ts",
+    "demo": "tsx apps/server/src/demo.ts",
+    "server": "tsx watch apps/server/src/index.ts",
+    "web": "npm run dev --workspace @ars/web",
+    "dev": "concurrently -n server,web -c blue,green \"npm run server\" \"npm run web\"",
+    "build": "npm run build --workspace @ars/web",
+    "start": "tsx apps/server/src/index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
