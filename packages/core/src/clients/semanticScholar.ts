@@ -1,111 +1,26 @@
+import {
+  type LitPaper,
+  type VerifyResult,
+  decideMatch,
+  pickBest,
+  linkOf,
+  sleep,
+} from './literature.js';
+
 const BASE = 'https://api.semanticscholar.org/graph/v1';
 const FIELDS = 'title,year,venue,authors,externalIds,abstract,citationCount,url';
 
-export interface SSPaper {
-  paperId: string;
-  title: string;
-  year: number | null;
-  venue: string | null;
-  url: string | null;
-  doi: string | null;
-  abstract: string | null;
-  citationCount: number | null;
-  authors: string[];
-}
+// Kept as an alias so existing imports (`SSPaper`) keep working; the shared
+// LitPaper is the real type.
+export type SSPaper = LitPaper;
+export type { VerifyResult, VerifyStatus } from './literature.js';
+export { linkOf } from './literature.js';
 
-export type VerifyStatus = 'verified' | 'not_found' | 'lookup_failed';
-
-export interface VerifyResult {
-  verified: boolean;
-  status: VerifyStatus;
-  matchedTitle: string | null;
-  paperId: string | null;
-  url: string | null;
-  note: string;
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-// ── title / author / year matching ────────────────────────────────────────
-
-function normalize(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '') // strip combining diacritics
-    .replace(/[^a-z0-9 ]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/** Drop a subtitle after the first colon so "X: a study of Y" matches "X". */
-function baseTitle(s: string): string {
-  const cut = s.split(':')[0];
-  return normalize(cut.length >= 4 ? cut : s);
-}
-
-/** Jaccard-ish token overlap in [0,1] between two strings. */
-function tokenOverlap(a: string, b: string): number {
-  const ta = new Set(a.split(' ').filter(Boolean));
-  const tb = new Set(b.split(' ').filter(Boolean));
-  if (ta.size === 0 || tb.size === 0) return 0;
-  let inter = 0;
-  for (const t of ta) if (tb.has(t)) inter++;
-  return inter / Math.max(ta.size, tb.size);
-}
-
-/** Last-name tokens, lower-cased, for author comparison. */
-function surnames(authors: string[]): Set<string> {
-  const out = new Set<string>();
-  for (const a of authors) {
-    const parts = normalize(a).split(' ').filter(Boolean);
-    if (parts.length) out.add(parts[parts.length - 1]);
-  }
-  return out;
-}
-
-function surnameOverlap(a: string[], b: string[]): number {
-  const sa = surnames(a);
-  const sb = surnames(b);
-  let n = 0;
-  for (const s of sa) if (sb.has(s)) n++;
-  return n;
-}
-
-/** Decide whether a candidate matches the queried citation. */
-function decideMatch(
-  query: { title: string; authors?: string[]; year?: number | null },
-  cand: SSPaper,
-): { ok: boolean; note: string } {
-  const simFull = tokenOverlap(normalize(query.title), normalize(cand.title));
-  const simBase = tokenOverlap(baseTitle(query.title), baseTitle(cand.title));
-  const authHit = query.authors?.length ? surnameOverlap(query.authors, cand.authors) : 0;
-  const yearKnown = query.year != null && cand.year != null;
-  const yearClose = yearKnown ? Math.abs((query.year as number) - (cand.year as number)) <= 1 : false;
-
-  const strong = simFull >= 0.9 || simBase >= 0.75;
-  const corroborated = simBase >= 0.5 && authHit >= 1 && (!yearKnown || yearClose);
-  const ok = strong || corroborated;
-
-  const bits = [
-    `title≈${simFull.toFixed(2)}`,
-    `base≈${simBase.toFixed(2)}`,
-    query.authors?.length ? `authors matched=${authHit}` : null,
-    yearKnown ? `year Δ=${Math.abs((query.year as number) - (cand.year as number))}` : null,
-  ].filter(Boolean);
-
-  return {
-    ok,
-    note: ok
-      ? `Matched (${bits.join(', ')}).`
-      : `Closest hit "${cand.title}" too weak (${bits.join(', ')}) — verify manually.`,
-  };
-}
-
-function toSSPaper(hit: any): SSPaper {
+function toSSPaper(hit: any): LitPaper {
   const doi = hit?.externalIds?.DOI ?? null;
   return {
     paperId: hit.paperId,
+    source: 'semanticscholar',
     title: hit.title ?? '',
     year: hit.year ?? null,
     venue: hit.venue || null,
@@ -115,12 +30,6 @@ function toSSPaper(hit: any): SSPaper {
     citationCount: hit.citationCount ?? null,
     authors: (hit.authors ?? []).map((a: any) => a.name).filter(Boolean),
   };
-}
-
-/** Prefer a resolvable DOI link, fall back to the S2 landing page. */
-export function linkOf(p: SSPaper): string | null {
-  if (p.doi) return `https://doi.org/${p.doi}`;
-  return p.url ?? null;
 }
 
 // ── client ─────────────────────────────────────────────────────────────────
@@ -166,7 +75,7 @@ export class SemanticScholar {
   }
 
   /** Discovery search: real papers for a topical query, ranked by S2 relevance. */
-  async search(query: string, opts: { limit?: number } = {}): Promise<SSPaper[]> {
+  async search(query: string, opts: { limit?: number } = {}): Promise<LitPaper[]> {
     const limit = Math.min(Math.max(opts.limit ?? 10, 1), 100);
     const url =
       `${BASE}/paper/search?query=${encodeURIComponent(query)}` +
@@ -177,7 +86,7 @@ export class SemanticScholar {
   }
 
   /** Best exact-title match via the dedicated /match endpoint (404 → null). */
-  async matchTitle(title: string): Promise<SSPaper | null> {
+  async matchTitle(title: string): Promise<LitPaper | null> {
     const url =
       `${BASE}/paper/search/match?query=${encodeURIComponent(title)}` +
       `&fields=${encodeURIComponent(FIELDS)}`;
@@ -232,26 +141,4 @@ export class SemanticScholar {
       };
     }
   }
-}
-
-/** Choose the best candidate among search hits for a queried citation. */
-function pickBest(
-  query: { title: string; authors?: string[]; year?: number | null },
-  hits: SSPaper[],
-): SSPaper | null {
-  let best: SSPaper | null = null;
-  let bestScore = 0;
-  for (const h of hits) {
-    const simBase = tokenOverlap(baseTitle(query.title), baseTitle(h.title));
-    const authHit = query.authors?.length ? surnameOverlap(query.authors, h.authors) : 0;
-    const yearClose =
-      query.year != null && h.year != null && Math.abs(query.year - h.year) <= 1 ? 1 : 0;
-    const score = simBase + 0.3 * (authHit > 0 ? 1 : 0) + 0.1 * yearClose;
-    if (score > bestScore) {
-      bestScore = score;
-      best = h;
-    }
-  }
-  // Require at least a moderate title overlap before proposing a candidate.
-  return best && tokenOverlap(baseTitle(query.title), baseTitle(best.title)) >= 0.4 ? best : null;
 }

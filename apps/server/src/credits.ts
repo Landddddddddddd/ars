@@ -55,18 +55,27 @@ export const charge = db.transaction(
   },
 );
 
-/** Refund `amount` credits, idempotent by ref (a run only refunds once). */
-export const refund = db.transaction(
-  (userId: string, amount: number, ref: string): number | null => {
-    if (ledgerByRef.get(userId, 'run.refund', ref)) return null; // already refunded
-    const row = selectCredits.get(userId) as { credits: number } | undefined;
-    if (!row) return null;
-    const after = row.credits + amount;
-    updateCredits.run(amount, userId);
-    insertLedger.run(randomUUID(), userId, amount, 'run.refund', ref, after, Date.now());
-    return after;
-  },
+const stepSumForRun = db.prepare(
+  `SELECT COALESCE(SUM(delta), 0) AS s FROM ledger
+   WHERE user_id = ? AND reason = 'run.step' AND ref LIKE ?`,
 );
+
+/**
+ * Refund every step charged for `runId` (a failed run costs nothing). Idempotent:
+ * once a 'run.refund' row exists for the run, further calls are no-ops.
+ */
+export const refundRun = db.transaction((userId: string, runId: string): number | null => {
+  if (ledgerByRef.get(userId, 'run.refund', runId)) return null; // already refunded
+  const { s } = stepSumForRun.get(userId, `${runId}:%`) as { s: number };
+  const charged = -s; // step deltas are negative; charged is the positive total
+  if (charged <= 0) return null; // nothing was charged yet
+  const row = selectCredits.get(userId) as { credits: number } | undefined;
+  if (!row) return null;
+  const after = row.credits + charged;
+  updateCredits.run(charged, userId);
+  insertLedger.run(randomUUID(), userId, charged, 'run.refund', runId, after, Date.now());
+  return after;
+});
 
 export interface PublicUser {
   id: string;

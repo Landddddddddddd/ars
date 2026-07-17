@@ -4,10 +4,14 @@ import {
   streamRun,
   fetchProviders,
   fetchStages,
+  fetchPricing,
+  suggestTopics,
   type TEvent,
   type ProviderPreset,
   type OutputLanguage,
   type StageInfo,
+  type Pricing,
+  type SuggestedTopic,
 } from './api.js';
 import { AgentCard, type AgentState } from './components/AgentCard.js';
 import { PaperExport, isPaperData, type PaperData } from './components/PaperExport.js';
@@ -66,6 +70,10 @@ export function App() {
   const { user, loading, logout, refreshMe } = useAuth();
   const [topic, setTopic] = useState('');
   const [buyOpen, setBuyOpen] = useState(false);
+  const [pricing, setPricing] = useState<Pricing | null>(null);
+  const runCost = pricing?.runCost ?? null;
+  const [suggestions, setSuggestions] = useState<SuggestedTopic[] | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
   const [stages, setStages] = useState<StageInfo[]>([]);
   const [agents, setAgents] = useState<Record<string, AgentState>>({});
@@ -87,6 +95,9 @@ export function App() {
         setAgents(freshAgents(s));
       })
       .catch(() => setStages([]));
+    fetchPricing()
+      .then(setPricing)
+      .catch(() => setPricing(null));
   }, []);
 
   useEffect(() => {
@@ -115,7 +126,9 @@ export function App() {
     (e: TEvent) => {
       switch (e.type) {
         case 'agent.start':
+          // Credits are charged when a step starts — refresh so the header ticks down.
           patch(e.agent, (a) => ({ ...a, status: 'running' }));
+          refreshMe();
           break;
         case 'agent.thinking':
           patch(e.agent, (a) => ({ ...a, thinking: a.thinking + e.delta }));
@@ -148,6 +161,11 @@ export function App() {
   const start = useCallback(async () => {
     const t = topic.trim();
     if (!t || status === 'running') return;
+    // Pre-check: a full run needs runCost credits (charged step by step).
+    if (runCost !== null && user && user.credits < runCost) {
+      setBuyOpen(true);
+      return;
+    }
     closeRef.current?.();
     setAgents(freshAgents(stages));
     setPaper(null);
@@ -155,7 +173,6 @@ export function App() {
     try {
       const override = buildOverride(settings, presets);
       const runId = await startRun(t, override, language);
-      refreshMe(); // reflect the up-front charge
       closeRef.current = streamRun(runId, handleEvent);
     } catch (err) {
       setStatus('idle');
@@ -165,7 +182,24 @@ export function App() {
         alert((err as Error).message);
       }
     }
-  }, [topic, status, handleEvent, settings, presets, language, stages, refreshMe]);
+  }, [topic, status, handleEvent, settings, presets, language, stages, runCost, user]);
+
+  // Turn the current input (a broad direction) into focused topic options. Free.
+  const suggest = useCallback(async () => {
+    const d = topic.trim();
+    if (!d || suggesting || status === 'running') return;
+    setSuggesting(true);
+    setSuggestions(null);
+    try {
+      const override = buildOverride(settings, presets);
+      const topics = await suggestTopics(d, override, language);
+      setSuggestions(topics);
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setSuggesting(false);
+    }
+  }, [topic, suggesting, status, settings, presets, language]);
 
   if (loading) {
     return (
@@ -233,10 +267,59 @@ export function App() {
           onKeyDown={(e) => e.key === 'Enter' && start()}
           disabled={status === 'running'}
         />
+        <button
+          className="suggest-btn"
+          onClick={suggest}
+          disabled={status === 'running' || suggesting || !topic.trim()}
+          title="把宽泛方向变成几个聚焦、可直接研究的课题"
+        >
+          {suggesting ? '生成中…' : '获取选题建议'}
+        </button>
         <button onClick={start} disabled={status === 'running' || !topic.trim()}>
           {status === 'running' ? '研究中…' : '开始研究'}
         </button>
       </div>
+
+      {suggestions && (
+        <div className="suggestions">
+          <div className="suggestions-head">
+            <span>选择一个聚焦课题（点选即填入，可再编辑）</span>
+            <button className="link-btn" onClick={() => setSuggestions(null)}>
+              收起
+            </button>
+          </div>
+          {suggestions.length === 0 ? (
+            <div className="empty">未能生成选题，换个方向再试。</div>
+          ) : (
+            suggestions.map((s, i) => (
+              <button
+                key={i}
+                className="suggestion"
+                onClick={() => {
+                  setTopic(s.title);
+                  setSuggestions(null);
+                }}
+              >
+                <span className="suggestion-title">{s.title}</span>
+                <span className="suggestion-why">{s.rationale}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+
+      {pricing && (
+        <div className="cost-hint">
+          逐步计费：
+          {pricing.stages.map((s, i) => (
+            <span key={s.id}>
+              {i > 0 && ' + '}
+              {s.title} {s.steps} 步 × {s.perStep} 分
+            </span>
+          ))}
+          ，合计 <b>{pricing.runCost}</b> 积分（论文写作阶段单步计费更高；失败自动全额退还）。
+        </div>
+      )}
 
       {status === 'idle' ? (
         <div className="empty">输入课题并点击「开始研究」，实时观察每个阶段各 Agent 的思考与产出，最后得到可导出的论文成稿。</div>

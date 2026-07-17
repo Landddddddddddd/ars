@@ -51,6 +51,24 @@ export async function fetchStages(): Promise<StageInfo[]> {
   return (j.stages ?? []) as StageInfo[];
 }
 
+export interface StageCost {
+  id: string;
+  title: string;
+  steps: number;
+  perStep: number;
+  subtotal: number;
+}
+
+export interface Pricing {
+  runCost: number;
+  stages: StageCost[];
+}
+
+export async function fetchPricing(): Promise<Pricing> {
+  const r = await fetch('/api/pricing');
+  return r.json();
+}
+
 export class ApiError extends Error {
   status: number;
   needCredits?: boolean;
@@ -172,6 +190,27 @@ export function formatPrice(amount: number, currency: string): string {
   const major = (amount / 100).toFixed(2);
   const sym = currency === 'CNY' ? '¥' : currency === 'USD' ? '$' : '';
   return sym ? `${sym}${major}` : `${major} ${currency}`;
+}
+
+export interface SuggestedTopic {
+  title: string;
+  rationale: string;
+}
+
+export async function suggestTopics(
+  direction: string,
+  provider?: ProviderOverride | null,
+  language: OutputLanguage = 'auto',
+): Promise<SuggestedTopic[]> {
+  const r = await fetch('/api/topics/suggest', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ direction, provider: provider ?? null, language }),
+  });
+  const j = await r.json();
+  if (!r.ok) throw new ApiError(j.error ?? '生成选题失败', r.status);
+  return (j.topics ?? []) as SuggestedTopic[];
 }
 
 export function streamRun(runId: string, onEvent: (e: TEvent) => void): () => void {

@@ -17,8 +17,8 @@ function flag(name: string, def: boolean): boolean {
 export const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-insecure-session-secret';
 export const SESSION_TTL_MS = int('SESSION_TTL_DAYS', 30) * 24 * 60 * 60 * 1000;
 
-export const SIGNUP_BONUS_CREDITS = int('SIGNUP_BONUS_CREDITS', 20);
-export const RUN_COST_CREDITS = int('RUN_COST_CREDITS', 10);
+// Credit pricing (per-step + signup bonus) lives in pricing.ts, since it derives
+// from the pipeline's step count.
 export const REQUIRE_EMAIL_VERIFY = flag('REQUIRE_EMAIL_VERIFY', false);
 
 export const PAYMENT_PROVIDER = (process.env.PAYMENT_PROVIDER || 'mock') as

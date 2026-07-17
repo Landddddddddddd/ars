@@ -1,6 +1,6 @@
 import { defineAgent } from '../../agent.js';
 import { loadConfig } from '../../config.js';
-import { SemanticScholar } from '../../clients/semanticScholar.js';
+import { LiteratureClient } from '../../clients/literatureClient.js';
 import type { CitationCheck } from '../../schemas.js';
 
 export const citationVerifier = defineAgent({
@@ -10,7 +10,10 @@ export const citationVerifier = defineAgent({
   role: 'Confirm each cited paper exists via the Semantic Scholar API.',
   async run({ ctx, emit }) {
     const cfg = loadConfig();
-    const ss = new SemanticScholar(cfg.semanticScholarApiKey);
+    const lit = new LiteratureClient({
+      semanticScholarApiKey: cfg.semanticScholarApiKey,
+      openAlexMailto: cfg.openAlexMailto,
+    });
     const checks: CitationCheck[] = [];
 
     if (ctx.papers.length === 0) {
@@ -32,7 +35,7 @@ export const citationVerifier = defineAgent({
 
       let check: CitationCheck;
       if (paper.paperId) {
-        // Already retrieved from Semantic Scholar → known real; no re-query.
+        // Already retrieved from a real index (OpenAlex/S2) → known real; no re-query.
         check = {
           title: paper.title,
           verified: true,
@@ -40,11 +43,11 @@ export const citationVerifier = defineAgent({
           matchedTitle: paper.title,
           paperId: paper.paperId,
           url: paper.url ?? null,
-          note: 'Retrieved directly from Semantic Scholar.',
+          note: 'Retrieved directly from a scholarly index.',
         };
       } else {
         // Fallback/memory-sourced entry → verify by title + author/year.
-        const r = await ss.verifyTitle(paper.title, {
+        const r = await lit.verifyTitle(paper.title, {
           authors: paper.authors,
           year: paper.year,
         });

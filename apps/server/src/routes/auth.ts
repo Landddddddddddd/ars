@@ -9,7 +9,8 @@ import {
   type AuthVars,
 } from '../auth.js';
 import { grant, publicUser } from '../credits.js';
-import { SIGNUP_BONUS_CREDITS, REQUIRE_EMAIL_VERIFY } from '../env.js';
+import { REQUIRE_EMAIL_VERIFY } from '../env.js';
+import { SIGNUP_BONUS_CREDITS } from '../pricing.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

@@ -446,6 +446,63 @@ header .sub {
   background: #3a1717; color: var(--red);
 }
 
+.cost-hint {
+  color: var(--muted);
+  font-size: 13px;
+  margin: -8px 0 16px;
+}
+.cost-hint b {
+  color: var(--accent);
+}
+
+/* Secondary "suggest topics" button sits beside the primary composer button. */
+.composer .suggest-btn {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.composer .suggest-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.suggestions {
+  margin: -6px 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.suggestions-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+.suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.suggestion:hover {
+  border-color: var(--accent);
+  background: var(--panel-2);
+}
+.suggestion-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.suggestion-why {
+  font-size: 13px;
+  color: var(--muted);
+}
+
 /* ---- Auth + credits (paid layer) ---------------------------------------- */
 
 .header-row {

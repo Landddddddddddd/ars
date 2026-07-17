@@ -24,6 +24,7 @@ export interface ArsConfig {
     stream: boolean;
   };
   semanticScholarApiKey?: string;
+  openAlexMailto?: string;
 }
 
 export function hasServerCredentials(cfg: ArsConfig): boolean {
@@ -49,5 +50,6 @@ export function loadConfig(): ArsConfig {
       stream: flag('ARS_STREAM', true),
     },
     semanticScholarApiKey: process.env.SEMANTIC_SCHOLAR_API_KEY || undefined,
+    openAlexMailto: process.env.OPENALEX_MAILTO || undefined,
   };
 }

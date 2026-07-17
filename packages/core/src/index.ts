@@ -45,6 +45,12 @@ export type { PipelineArgs, StageDef } from './pipeline.js';
 
 export { assembleMarkdown } from './draft.js';
 
+export { suggestResearchTopics } from './suggest.js';
+export type { SuggestedTopic } from './suggest.js';
+
 export { SemanticScholar } from './clients/semanticScholar.js';
+export { OpenAlex } from './clients/openAlex.js';
+export { LiteratureClient } from './clients/literatureClient.js';
+export type { LitPaper, VerifyResult, VerifyStatus } from './clients/literature.js';
 
 export * as agents from './agents/index.js';

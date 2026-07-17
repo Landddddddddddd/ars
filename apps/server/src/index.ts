@@ -11,6 +11,7 @@ import {
   resolveProviderConfig,
   createContext,
   runPipeline,
+  suggestResearchTopics,
   STAGES,
   PROVIDER_PRESETS,
   isOutputLanguage,
@@ -20,14 +21,14 @@ import { RunStore } from './runStore.js';
 import { authRoutes } from './routes/auth.js';
 import { billingRoutes } from './routes/billing.js';
 import { requireAuth, type AuthVars } from './auth.js';
-import { charge, refund, isInsufficient } from './credits.js';
-import { RUN_COST_CREDITS } from './env.js';
+import { charge, refundRun, isInsufficient, getBalance } from './credits.js';
+import { stepCost, FULL_RUN_COST, costBreakdown } from './pricing.js';
 
 const cfg = loadConfig();
 const baseProvider = defaultProviderConfig(cfg);
 const serverHasCreds = hasServerCredentials(cfg);
-// Refund the run's charge if it fails before producing anything useful.
-const store = new RunStore((run) => refund(run.userId, RUN_COST_CREDITS, run.id));
+// A failed run costs nothing — refund whatever steps were charged for it.
+const store = new RunStore((run) => refundRun(run.userId, run.id));
 
 const app = new Hono<{ Variables: AuthVars }>();
 // CORS must allow credentials so the session cookie flows on same-origin/proxied
@@ -59,9 +60,48 @@ app.get('/api/stages', (c) =>
   }),
 );
 
-// Start a research run. Requires auth; charges RUN_COST_CREDITS up front and
-// refunds on failure (via the RunStore onRunFailed hook). Optional `provider`
-// override supplies the user's own endpoint + key (used only for this run).
+// Per-run pricing (with per-stage breakdown) so the UI can show the cost and
+// pre-check balance.
+app.get('/api/pricing', (c) =>
+  c.json({ runCost: FULL_RUN_COST, stages: costBreakdown() }),
+);
+
+// Suggest focused research topics from a broad direction. Free (no credits) —
+// it uses the user's own provider key, same as a run. Requires auth.
+app.post('/api/topics/suggest', requireAuth, async (c) => {
+  const body = await c.req
+    .json<{ direction?: string; provider?: Partial<ProviderConfig> | null; language?: string }>()
+    .catch(() => ({}) as { direction?: string; provider?: Partial<ProviderConfig> | null; language?: string });
+
+  const direction = (body.direction ?? '').trim();
+  if (!direction) return c.json({ error: '请输入研究方向' }, 400);
+
+  const language = isOutputLanguage(body.language) ? body.language : 'auto';
+  if (body.provider && !body.provider.apiKey && !body.provider.authToken) {
+    return c.json({ error: '选择自定义模型时需要提供 API Key' }, 400);
+  }
+
+  const providerCfg = resolveProviderConfig(baseProvider, body.provider ?? null);
+  let llm;
+  try {
+    llm = createLLM(providerCfg);
+  } catch (err) {
+    return c.json({ error: 'Failed to init model: ' + (err as Error).message }, 400);
+  }
+
+  try {
+    const topics = await suggestResearchTopics(llm, direction, language);
+    return c.json({ topics });
+  } catch (err) {
+    return c.json({ error: '生成选题失败：' + (err as Error).message }, 502);
+  }
+});
+
+// Start a research run. Requires auth. Credits are charged step by step as each
+// agent runs; we gate on the full-run cost up front so a started run is
+// guaranteed enough credits to finish. A failed run is fully refunded (via the
+// RunStore onRunFailed hook). Optional `provider` override supplies the user's
+// own endpoint + key (used only for this run).
 app.post('/api/runs', requireAuth, async (c) => {
   const user = c.get('user');
   const body = await c.req
@@ -85,24 +125,35 @@ app.post('/api/runs', requireAuth, async (c) => {
     return c.json({ error: 'Failed to init model: ' + (err as Error).message }, 400);
   }
 
-  const run = store.create(topic, user.id);
-
-  // Charge before starting. Insufficient balance → 402 so the UI can prompt top-up.
-  let balance: number;
-  try {
-    balance = charge(user.id, RUN_COST_CREDITS, 'run.charge', run.id);
-  } catch (err) {
-    if (isInsufficient(err)) {
-      return c.json({ error: '积分不足，请先充值', needCredits: true, cost: RUN_COST_CREDITS }, 402);
-    }
-    throw err;
+  // Gate on the full-run cost so a started run can always complete.
+  if (getBalance(user.id) < FULL_RUN_COST) {
+    return c.json(
+      { error: '积分不足，请先充值', needCredits: true, cost: FULL_RUN_COST },
+      402,
+    );
   }
 
+  const run = store.create(topic, user.id);
   const ctx = createContext(run.id, topic, language);
+
+  // Charge each agent's (stage-weighted) cost as it starts, so the balance ticks
+  // down through the run. The up-front gate guarantees each step can be charged.
+  const emit = (e: Parameters<typeof store.emit>[1]) => {
+    if (e.type === 'agent.start') {
+      try {
+        charge(user.id, stepCost(e.agent), 'run.step', `${run.id}:${e.agent}`);
+      } catch (err) {
+        if (!isInsufficient(err)) throw err; // ran dry (e.g. a concurrent run) — abort
+        store.emit(run, { type: 'run.error', message: '积分不足，运行已中止' });
+        return;
+      }
+    }
+    store.emit(run, e);
+  };
 
   // Fire-and-forget; events flow to SSE subscribers. A thrown error emits
   // run.error, which triggers the store's refund hook.
-  runPipeline({ ctx, llm, emit: (e) => store.emit(run, e) }).catch((err) => {
+  runPipeline({ ctx, llm, emit }).catch((err) => {
     store.emit(run, { type: 'run.error', message: (err as Error).message });
   });
 
@@ -110,7 +161,8 @@ app.post('/api/runs', requireAuth, async (c) => {
     runId: run.id,
     provider: providerCfg.provider,
     model: providerCfg.model,
-    credits: balance,
+    credits: getBalance(user.id),
+    runCost: FULL_RUN_COST,
   });
 });
 

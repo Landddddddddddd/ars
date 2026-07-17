@@ -1,7 +1,8 @@
 import * as z from 'zod/v4';
 import { defineAgent } from '../../agent.js';
 import { loadConfig } from '../../config.js';
-import { SemanticScholar, linkOf, type SSPaper } from '../../clients/semanticScholar.js';
+import { LiteratureClient } from '../../clients/literatureClient.js';
+import { linkOf, type LitPaper } from '../../clients/literature.js';
 import type { Paper } from '../../schemas.js';
 
 // The LLM turns the topic into real search queries...
@@ -33,7 +34,10 @@ export const literatureSearch = defineAgent({
   effort: 'medium',
   async run({ ctx, llm, emit }) {
     const cfg = loadConfig();
-    const ss = new SemanticScholar(cfg.semanticScholarApiKey);
+    const lit = new LiteratureClient({
+      semanticScholarApiKey: cfg.semanticScholarApiKey,
+      openAlexMailto: cfg.openAlexMailto,
+    });
 
     // 1. Topic → 2–4 targeted search queries.
     const { queries } = await llm.parse({
@@ -52,21 +56,20 @@ export const literatureSearch = defineAgent({
       delta: `Queries: ${queries.join(' | ')}\n`,
     });
 
-    // 2. Retrieve REAL candidates; dedupe by paperId. Transient failures on one
-    //    query don't sink the others.
-    const byId = new Map<string, SSPaper>();
-    let failures = 0;
+    // 2. Retrieve REAL candidates from all sources (OpenAlex + S2 if keyed);
+    //    dedupe by paperId. Transient failures on one query don't sink the others.
+    const byId = new Map<string, LitPaper>();
+    const sourceErrors = new Set<string>();
     for (const q of queries) {
       emit({ type: 'agent.output', agent: 'literature-search', delta: `Searching: ${q}\n` });
-      try {
-        const hits = await ss.search(q, { limit: 10 });
-        for (const h of hits) byId.set(h.paperId, h);
-      } catch (err) {
-        failures++;
+      const { papers, errors } = await lit.search(q, { limit: 10 });
+      for (const h of papers) byId.set(h.paperId, h);
+      for (const e of errors) sourceErrors.add(e);
+      if (papers.length === 0 && errors.length > 0) {
         emit({
           type: 'agent.output',
           agent: 'literature-search',
-          delta: `  ⚠ search failed (${(err as Error).message})\n`,
+          delta: `  ⚠ search failed (${errors.join('; ')})\n`,
         });
       }
     }
@@ -78,9 +81,9 @@ export const literatureSearch = defineAgent({
     if (candidates.length === 0) {
       ctx.papers = [];
       const why =
-        failures === queries.length
-          ? 'Semantic Scholar was unreachable for every query (rate-limit/network).'
-          : 'No matching papers were returned.';
+        sourceErrors.size > 0
+          ? `Literature sources errored (${[...sourceErrors].join('; ')}).`
+          : 'No matching papers were returned for these queries.';
       ctx.log.push(`literature-search: 0 papers — ${why}`);
       emit({
         type: 'agent.result',
