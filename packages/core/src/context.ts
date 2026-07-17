@@ -1,4 +1,11 @@
-import type { Paper, ResearchQuestion, Critique, CitationCheck } from './schemas.js';
+import type {
+  Paper,
+  ResearchQuestion,
+  Critique,
+  CitationCheck,
+  OutlineSection,
+  PaperDraft,
+} from './schemas.js';
 import type { OutputLanguage } from './language.js';
 
 export interface ResearchContext {
@@ -9,6 +16,10 @@ export interface ResearchContext {
   researchQuestions: ResearchQuestion[];
   critiques: Critique[];
   citationChecks: CitationCheck[];
+  // Paper-drafting stage
+  outline: OutlineSection[];
+  draft: PaperDraft | null;
+  draftReview: Critique[];
   log: string[];
 }
 
@@ -25,6 +36,9 @@ export function createContext(
     researchQuestions: [],
     critiques: [],
     citationChecks: [],
+    outline: [],
+    draft: null,
+    draftReview: [],
     log: [],
   };
 }

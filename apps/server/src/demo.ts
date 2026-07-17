@@ -4,7 +4,8 @@ import {
   createLLM,
   defaultProviderConfig,
   createContext,
-  runDeepResearch,
+  runPipeline,
+  assembleMarkdown,
   isOutputLanguage,
 } from '@ars/core';
 import type { AgentEvent } from '@ars/core';
@@ -45,13 +46,20 @@ async function main() {
     }
   };
 
-  await runDeepResearch({ ctx, llm, emit });
+  await runPipeline({ ctx, llm, emit });
 
   console.log(bold('\n\n═══ Summary ═══'));
   console.log(`Papers:            ${ctx.papers.length}`);
   console.log(`Citations verified: ${ctx.citationChecks.filter((c) => c.verified).length}/${ctx.citationChecks.length}`);
   console.log(`Research questions: ${ctx.researchQuestions.length}`);
   console.log(`Critiques:          ${ctx.critiques.length}`);
+  console.log(`Draft sections:     ${ctx.draft?.sections.length ?? 0}`);
+  console.log(`Review items:       ${ctx.draftReview.length}`);
+
+  if (ctx.draft) {
+    console.log(bold('\n\n═══ Paper Draft ═══\n'));
+    console.log(assembleMarkdown(ctx.draft));
+  }
   console.log('');
 }
 

@@ -100,7 +100,8 @@ function Result({ name, data }: { name: string; data: unknown }) {
     );
   }
 
-  if (name === 'devils-advocate') {
+  // Devil's advocate and internal reviewer share the critique shape.
+  if (name === 'devils-advocate' || name === 'internal-reviewer') {
     return (
       <ul className="result">
         {data.map((c: any, i) => (
@@ -108,6 +109,58 @@ function Result({ name, data }: { name: string; data: unknown }) {
             <span className={`sev ${c.severity}`}>{c.severity}</span> <b>{c.issue}</b>
             <div className="muted">针对：{c.target}</div>
             <div>建议：{c.suggestion}</div>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (name === 'outline-architect') {
+    return (
+      <ol className="result">
+        {data.map((s: any, i) => (
+          <li key={i}>
+            <b>{s.title}</b>
+            <ul className="muted">
+              {(s.bullets ?? []).map((b: string, j: number) => (
+                <li key={j}>{b}</li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ol>
+    );
+  }
+
+  // section-writer and reviser both return the section list.
+  if (name === 'section-writer' || name === 'reviser') {
+    return (
+      <ul className="result">
+        {data.map((s: any, i) => (
+          <li key={i}>
+            <b>{s.title}</b>{' '}
+            <span className="muted">（{(s.content ?? '').length} 字）</span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (name === 'citation-weaver') {
+    return (
+      <ul className="result">
+        {data.map((r: any, i) => (
+          <li key={i}>
+            <span className="muted">[{r.citationKey}]</span> <b>{r.title}</b>{' '}
+            <span className="muted">({r.year ?? 'n.d.'})</span>
+            {r.url && (
+              <>
+                {' '}
+                <a href={r.url} target="_blank" rel="noreferrer">
+                  链接
+                </a>
+              </>
+            )}
           </li>
         ))}
       </ul>

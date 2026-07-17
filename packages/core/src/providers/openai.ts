@@ -68,15 +68,30 @@ export class OpenAICompatibleLLM implements LLMClient {
     const jsonSchema = z.toJSONSchema(args.schema as any);
     const system =
       args.system +
-      '\n\nReturn ONLY a single JSON object that conforms to this JSON schema ' +
-      '(no markdown, no prose):\n' +
+      '\n\nReturn ONLY a single JSON object that is an INSTANCE of the schema below, ' +
+      'with real values filled in. Do NOT return the schema itself; never output keys ' +
+      'named "$schema", "properties", or "type". No markdown, no prose.\n\nSchema:\n' +
       JSON.stringify(jsonSchema);
     const messages = toChat(system, args.messages);
     const maxTokens = args.maxTokens ?? 8192;
 
+    // Weak relay models sometimes echo the JSON Schema back instead of an instance.
+    // It's valid JSON, so JSON.parse succeeds — detect it and treat as a miss.
+    const looksLikeSchema = (o: any): boolean =>
+      !!o &&
+      typeof o === 'object' &&
+      !Array.isArray(o) &&
+      ('$schema' in o || (o.type === 'object' && 'properties' in o));
+
+    let sawSchemaEcho = false;
     const tryParse = (text: string): T | null => {
       try {
-        const p = args.schema.safeParse(JSON.parse(extractJson(text)));
+        const obj = JSON.parse(extractJson(text));
+        if (looksLikeSchema(obj)) {
+          sawSchemaEcho = true;
+          return null;
+        }
+        const p = args.schema.safeParse(obj);
         return p.success ? p.data : null;
       } catch {
         return null;
@@ -107,6 +122,35 @@ export class OpenAICompatibleLLM implements LLMClient {
         lastErr = err; // e.g. 401 auth / network — surface it if nothing else worked
       }
     }
+
+    // Corrective pass: if the model echoed the schema, show it the mistake and demand
+    // an instance. Often recovers models that ignored the "instance not schema" hint.
+    if (sawSchemaEcho) {
+      try {
+        const fixMessages: ChatMsg[] = [
+          ...messages,
+          { role: 'assistant', content: stripThink(lastText).slice(0, 1500) },
+          {
+            role: 'user',
+            content:
+              'That was the JSON SCHEMA definition, not data. Reply again with ONLY a JSON ' +
+              'object that is an INSTANCE of the schema — put real values in every field. ' +
+              'Do not include "$schema", "properties", or "type".',
+          },
+        ];
+        const res = await this.create({
+          model: this.model,
+          messages: fixMessages,
+          max_tokens: maxTokens,
+          response_format: { type: 'json_object' },
+        });
+        const ok = tryParse(res.choices?.[0]?.message?.content ?? '');
+        if (ok) return ok;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+
     // If the API calls themselves failed (auth, network), surface that real error.
     if (lastErr && !lastText) throw lastErr;
     throw new Error(

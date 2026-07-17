@@ -4,13 +4,43 @@ services:
   - type: web
     name: ars
     runtime: node
-    plan: free
+    # NOTE: a persistent disk (below) requires a paid instance — the free plan has
+    # an ephemeral filesystem that is wiped on every deploy, which would destroy
+    # users & credits. Use "starter" (or higher), or switch DATABASE_PATH to a
+    # managed Postgres instead of SQLite.
+    plan: starter
     buildCommand: npm install && npm run build
     startCommand: npm start
+    disk:
+      name: ars-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
-      # Optional server-side default credentials. Leave unset for a "bring your own key"
-      # deployment — users enter a provider + key in the UI. Set these only if you want
-      # the "默认（服务器 .env）" option to work for everyone.
+      # --- Paid layer ---
+      - key: DATABASE_PATH
+        value: /data/ars.db          # on the persistent disk above
+      - key: SESSION_SECRET
+        generateValue: true          # Render generates a strong random secret
+      - key: COOKIE_SECURE
+        value: "1"                   # served over HTTPS on Render
+      - key: PUBLIC_BASE_URL
+        sync: false                  # set to your https://<service>.onrender.com URL
+      - key: PAYMENT_PROVIDER
+        value: stripe                # international site; use "alipay" for the domestic one
+      - key: SITE_CURRENCY
+        value: USD                   # "CNY" for the domestic site
+      - key: SIGNUP_BONUS_CREDITS
+        value: "20"
+      - key: RUN_COST_CREDITS
+        value: "10"
+      # Stripe (set in the dashboard, not committed):
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+
+      # Optional server-side default model credentials. Leave unset for a "bring
+      # your own key" deployment — users enter a provider + key in the UI.
       - key: ANTHROPIC_AUTH_TOKEN
         sync: false
       - key: ANTHROPIC_BASE_URL

@@ -1,6 +1,6 @@
 import type { Paper, ResearchQuestion, Critique, CitationCheck } from './schemas.js';
 
-export type StageId = 'deep-research';
+export type StageId = 'deep-research' | 'paper-drafting';
 
 export type AgentEvent =
   | { type: 'run.start'; runId: string; topic: string }

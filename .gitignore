@@ -5,3 +5,9 @@ dist/
 *.log
 .DS_Store
 apps/web/dist/
+
+# SQLite database (users, credits, payments) — never commit
+data/
+*.db
+*.db-shm
+*.db-wal

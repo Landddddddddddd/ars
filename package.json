@@ -11,7 +11,8 @@
   "scripts": {
     "check": "tsx apps/server/src/preflight.ts",
     "demo": "tsx apps/server/src/demo.ts",
-    "server": "tsx watch apps/server/src/index.ts",
+    "server": "tsx apps/server/src/index.ts",
+    "server:watch": "tsx watch apps/server/src/index.ts",
     "web": "npm run dev --workspace @ars/web",
     "dev": "concurrently -n server,web -c blue,green \"npm run server\" \"npm run web\"",
     "build": "npm run build --workspace @ars/web",

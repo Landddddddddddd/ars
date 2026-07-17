@@ -10,20 +10,32 @@ import {
   defaultProviderConfig,
   resolveProviderConfig,
   createContext,
-  runDeepResearch,
+  runPipeline,
+  STAGES,
   PROVIDER_PRESETS,
   isOutputLanguage,
 } from '@ars/core';
 import type { TimestampedEvent, ProviderConfig } from '@ars/core';
 import { RunStore } from './runStore.js';
+import { authRoutes } from './routes/auth.js';
+import { billingRoutes } from './routes/billing.js';
+import { requireAuth, type AuthVars } from './auth.js';
+import { charge, refund, isInsufficient } from './credits.js';
+import { RUN_COST_CREDITS } from './env.js';
 
 const cfg = loadConfig();
 const baseProvider = defaultProviderConfig(cfg);
 const serverHasCreds = hasServerCredentials(cfg);
-const store = new RunStore();
+// Refund the run's charge if it fails before producing anything useful.
+const store = new RunStore((run) => refund(run.userId, RUN_COST_CREDITS, run.id));
 
-const app = new Hono();
-app.use('/api/*', cors());
+const app = new Hono<{ Variables: AuthVars }>();
+// CORS must allow credentials so the session cookie flows on same-origin/proxied
+// requests. In dev, Vite proxies /api to this server so it stays same-origin.
+app.use('/api/*', cors({ origin: (o) => o, credentials: true }));
+
+app.route('/api/auth', authRoutes);
+app.route('/api/billing', billingRoutes);
 
 app.get('/api/health', (c) => c.json({ ok: true, service: 'ars-server', model: cfg.model }));
 
@@ -36,9 +48,22 @@ app.get('/api/providers', (c) =>
   }),
 );
 
-// Start a research run. Optional `provider` override supplies the user's own
-// endpoint + key (used only for this run; never persisted or logged).
-app.post('/api/runs', async (c) => {
+// Pipeline shape (stages + their agents) so the UI can render itself dynamically.
+app.get('/api/stages', (c) =>
+  c.json({
+    stages: STAGES.map((s) => ({
+      id: s.id,
+      title: s.title,
+      agents: s.agents.map((a) => ({ name: a.name, title: a.title, role: a.role })),
+    })),
+  }),
+);
+
+// Start a research run. Requires auth; charges RUN_COST_CREDITS up front and
+// refunds on failure (via the RunStore onRunFailed hook). Optional `provider`
+// override supplies the user's own endpoint + key (used only for this run).
+app.post('/api/runs', requireAuth, async (c) => {
+  const user = c.get('user');
   const body = await c.req
     .json<{ topic?: string; provider?: Partial<ProviderConfig> | null; language?: string }>()
     .catch(() => ({}) as { topic?: string; provider?: Partial<ProviderConfig> | null; language?: string });
@@ -60,28 +85,46 @@ app.post('/api/runs', async (c) => {
     return c.json({ error: 'Failed to init model: ' + (err as Error).message }, 400);
   }
 
-  const run = store.create(topic);
+  const run = store.create(topic, user.id);
+
+  // Charge before starting. Insufficient balance → 402 so the UI can prompt top-up.
+  let balance: number;
+  try {
+    balance = charge(user.id, RUN_COST_CREDITS, 'run.charge', run.id);
+  } catch (err) {
+    if (isInsufficient(err)) {
+      return c.json({ error: '积分不足，请先充值', needCredits: true, cost: RUN_COST_CREDITS }, 402);
+    }
+    throw err;
+  }
+
   const ctx = createContext(run.id, topic, language);
 
-  // Fire-and-forget; events flow to SSE subscribers.
-  runDeepResearch({ ctx, llm, emit: (e) => store.emit(run, e) }).catch((err) => {
+  // Fire-and-forget; events flow to SSE subscribers. A thrown error emits
+  // run.error, which triggers the store's refund hook.
+  runPipeline({ ctx, llm, emit: (e) => store.emit(run, e) }).catch((err) => {
     store.emit(run, { type: 'run.error', message: (err as Error).message });
   });
 
-  return c.json({ runId: run.id, provider: providerCfg.provider, model: providerCfg.model });
+  return c.json({
+    runId: run.id,
+    provider: providerCfg.provider,
+    model: providerCfg.model,
+    credits: balance,
+  });
 });
 
-// Snapshot of a run (status + all events so far).
-app.get('/api/runs/:id', (c) => {
-  const run = store.get(c.req.param('id'));
-  if (!run) return c.json({ error: 'not found' }, 404);
+// Snapshot of a run (status + all events so far). Owner-only.
+app.get('/api/runs/:id', requireAuth, (c) => {
+  const run = store.get(c.req.param('id') ?? '');
+  if (!run || run.userId !== c.get('user').id) return c.json({ error: 'not found' }, 404);
   return c.json({ id: run.id, topic: run.topic, status: run.status, events: run.events });
 });
 
-// Live event stream (replays history, then tails). Reconnect-safe.
-app.get('/api/runs/:id/stream', (c) => {
-  const run = store.get(c.req.param('id'));
-  if (!run) return c.json({ error: 'not found' }, 404);
+// Live event stream (replays history, then tails). Reconnect-safe. Owner-only.
+app.get('/api/runs/:id/stream', requireAuth, (c) => {
+  const run = store.get(c.req.param('id') ?? '');
+  if (!run || run.userId !== c.get('user').id) return c.json({ error: 'not found' }, 404);
 
   return streamSSE(c, async (stream) => {
     const queue: TimestampedEvent[] = [];

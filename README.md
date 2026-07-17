@@ -66,11 +66,47 @@ server-side. The provider layer lives in `packages/core/src/providers/` (`anthro
 `openai.ts`, `factory.ts`, `presets.ts`); agents call a single `LLMClient` interface, so
 they are provider-agnostic.
 
+## Paid layer — accounts, credits, payments
+
+ARS can run as a **paid, pay-per-use site**. Credits buy access to the ARS platform
+(the multi-agent orchestration itself); users still bring their own model key, so the
+server carries **near-zero LLM cost**.
+
+- **Accounts:** email + password. Sessions are a signed **httpOnly cookie** (works for
+  both the `POST /api/runs` request and the SSE stream, which can't send auth headers).
+  New users get `SIGNUP_BONUS_CREDITS` free credits.
+- **Credits:** each research run costs `RUN_COST_CREDITS`, charged up front and
+  **refunded automatically if the run fails**. Out of credits → the run is rejected
+  with `402` and the UI opens the top-up dialog.
+- **Persistence:** SQLite (`better-sqlite3`) at `DATABASE_PATH` — the first persistent
+  layer. Tables: `users`, `sessions`, `ledger` (audit trail), `payments` (idempotent by
+  `provider + ref`, so a doubled webhook never double-credits).
+- **Payments** are pluggable via `PAYMENT_PROVIDER` — **one codebase, two sites**:
+
+  | Site | `PAYMENT_PROVIDER` | `SITE_CURRENCY` | Status |
+  |------|--------------------|-----------------|--------|
+  | International | `stripe` | `USD` | ✅ real Stripe Checkout + signed webhook |
+  | Domestic | `alipay` | `CNY` | 🚧 scaffold in `billing/alipay.ts` (add merchant keys) |
+  | Local/dev | `mock` | any | ✅ instant credit, full flow, no real money |
+
+  A provider with missing credentials is auto-disabled and its checkout returns `503`.
+
+Copy `.env.example` → `.env` and set `SESSION_SECRET`, `PAYMENT_PROVIDER`, the credit
+amounts, and (for Stripe) `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`. Then `npm run dev`.
+
+**Stripe webhook (local):** `stripe listen --forward-to localhost:8787/api/billing/webhook/stripe`
+and put the printed `whsec_…` in `STRIPE_WEBHOOK_SECRET`.
+
 ## Deploy online
 
 The server serves both the API and the built frontend, so **one Node service is the
 whole site**. Users bring their own provider + API key in the UI, so the server needs
-**no credentials** — great for a public deployment.
+**no model credentials** — but the paid layer **does** need a persistent database.
+
+> ⚠ **Persistence is money-critical.** `DATABASE_PATH` must live on a **persistent disk**
+> (Render Disk / Docker volume). On an ephemeral filesystem (e.g. Render's free plan) a
+> redeploy wipes all users & credits. `render.yaml` provisions a 1 GB disk on a paid
+> instance; the Dockerfile declares a `/data` volume.
 
 **Render (easiest):** push this repo to GitHub → Render → New → Blueprint → pick the repo
 (`render.yaml` is included). Or New → Web Service with build `npm install && npm run build`
@@ -80,7 +116,9 @@ and start `npm start`.
 
 ```bash
 docker build -t ars .
-docker run -p 8787:8787 ars        # optionally: -e ANTHROPIC_API_KEY=... for a server default
+docker run -p 8787:8787 -v ars-data:/data \
+  -e SESSION_SECRET=$(openssl rand -hex 32) -e PAYMENT_PROVIDER=stripe ars
+# the -v volume keeps users & credits across restarts; add -e ANTHROPIC_API_KEY=... for a server default
 ```
 
 **Notes**
@@ -88,7 +126,8 @@ docker run -p 8787:8787 ars        # optionally: -e ANTHROPIC_API_KEY=... for a 
   env vars (`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` or `ANTHROPIC_API_KEY`) only if you
   want the "默认（服务器 .env）" option to work for everyone; otherwise leave them unset.
 - The server binds `PORT` (platforms set this automatically).
-- Runs are stored in memory (M1) — fine for a demo; add persistence for production.
+- The credit database is persisted at `DATABASE_PATH`; **research runs themselves** are
+  still kept in memory (fine for live streaming — add run-history persistence later).
 
 ## Milestone roadmap
 

@@ -7,7 +7,7 @@ export const citationVerifier = defineAgent({
   name: 'citation-verifier',
   title: '文献溯源',
   stage: 'deep-research',
-  role: 'Verify each cited paper actually exists via the Semantic Scholar API.',
+  role: 'Confirm each cited paper exists via the Semantic Scholar API.',
   async run({ ctx, emit }) {
     const cfg = loadConfig();
     const ss = new SemanticScholar(cfg.semanticScholarApiKey);
@@ -29,24 +29,53 @@ export const citationVerifier = defineAgent({
         agent: 'citation-verifier',
         delta: `Checking: ${paper.title}\n`,
       });
-      const r = await ss.verifyTitle(paper.title);
-      checks.push({ title: paper.title, ...r });
+
+      let check: CitationCheck;
+      if (paper.paperId) {
+        // Already retrieved from Semantic Scholar → known real; no re-query.
+        check = {
+          title: paper.title,
+          verified: true,
+          status: 'verified',
+          matchedTitle: paper.title,
+          paperId: paper.paperId,
+          url: paper.url ?? null,
+          note: 'Retrieved directly from Semantic Scholar.',
+        };
+      } else {
+        // Fallback/memory-sourced entry → verify by title + author/year.
+        const r = await ss.verifyTitle(paper.title, {
+          authors: paper.authors,
+          year: paper.year,
+        });
+        check = { title: paper.title, ...r };
+        // Be polite to the shared free API only when we actually hit it.
+        await new Promise((res) => setTimeout(res, 1100));
+      }
+
+      checks.push(check);
       emit({
         type: 'agent.output',
         agent: 'citation-verifier',
-        delta: `  → ${r.verified ? '✓ verified' : '✗ unverified'} — ${r.note}\n`,
+        delta: `  → ${check.verified ? '✓ verified' : check.status === 'lookup_failed' ? '… lookup failed' : '✗ not found'} — ${check.note}\n`,
       });
-      // Be polite to the free API (avoid 429).
-      await new Promise((res) => setTimeout(res, 1100));
     }
 
     ctx.citationChecks = checks;
-    const ok = checks.filter((c) => c.verified).length;
-    ctx.log.push(`citation-verifier: ${ok}/${checks.length} verified`);
+    const verified = checks.filter((c) => c.status === 'verified' || c.verified).length;
+    const failed = checks.filter((c) => c.status === 'lookup_failed').length;
+    const notFound = checks.length - verified - failed;
+    ctx.log.push(
+      `citation-verifier: ${verified} verified, ${notFound} not found, ${failed} lookup-failed`,
+    );
     emit({
       type: 'agent.result',
       agent: 'citation-verifier',
-      summary: `${ok}/${checks.length} citations verified against Semantic Scholar.`,
+      summary:
+        `${verified}/${checks.length} verified` +
+        (notFound ? `, ${notFound} not found` : '') +
+        (failed ? `, ${failed} lookup-failed (transient)` : '') +
+        '.',
       data: checks,
     });
   },

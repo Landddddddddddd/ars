@@ -33,8 +33,17 @@ export * from './schemas.js';
 
 export { AgentRegistry } from './registry.js';
 
-export { runDeepResearch, deepResearchAgents, STAGE_TITLES } from './pipeline.js';
-export type { PipelineArgs } from './pipeline.js';
+export {
+  runPipeline,
+  runDeepResearch,
+  deepResearchAgents,
+  paperDraftingAgents,
+  STAGES,
+  STAGE_TITLES,
+} from './pipeline.js';
+export type { PipelineArgs, StageDef } from './pipeline.js';
+
+export { assembleMarkdown } from './draft.js';
 
 export { SemanticScholar } from './clients/semanticScholar.js';
 
