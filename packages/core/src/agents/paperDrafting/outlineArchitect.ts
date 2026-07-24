@@ -27,11 +27,12 @@ export const outlineArchitect = defineAgent({
 
     const system =
       'You are an academic writing architect. Design a clear, logically ordered outline ' +
-      'for a research paper. Produce standard sections (e.g. Introduction, Related Work, ' +
+      'for a research paper. Produce 5-7 standard sections (e.g. Introduction, Related Work, ' +
       'Method/Approach, Discussion, Conclusion) tailored to the topic. For each section give ' +
-      'a stable lowercase-slug id, a title, and 2-5 concrete bullet points describing what ' +
-      'that section must cover. Ground the bullets in the research questions, the surveyed ' +
-      'literature, and the raised critiques. Do NOT write prose yet — only the plan.';
+      'a stable lowercase-slug id, a title, and 2-5 SHORT bullet points describing what that ' +
+      'section must cover. Each bullet MUST be a single concise line (≤ 20 words) — a planning ' +
+      'note, NOT a paragraph or prose. Ground the bullets in the research questions, the ' +
+      'surveyed literature, and the raised critiques. Do NOT write prose yet — only the plan.';
 
     const user =
       `Topic: ${ctx.topic}\n\n` +

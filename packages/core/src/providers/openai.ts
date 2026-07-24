@@ -40,7 +40,7 @@ export class OpenAICompatibleLLM implements LLMClient {
 
   async generate(args: GenArgs): Promise<string> {
     const messages = toChat(args.system, args.messages);
-    const maxTokens = args.maxTokens ?? 8192; // reasoning models need headroom
+    const maxTokens = args.maxTokens ?? 16384; // reasoning + long prose need headroom
     const canStream = !!(args.onText || args.onThinking);
 
     if (canStream) {
@@ -73,7 +73,10 @@ export class OpenAICompatibleLLM implements LLMClient {
       'named "$schema", "properties", or "type". No markdown, no prose.\n\nSchema:\n' +
       JSON.stringify(jsonSchema);
     const messages = toChat(system, args.messages);
-    const maxTokens = args.maxTokens ?? 8192;
+    // Structured outputs (esp. verbose Chinese) plus reasoning tokens need real
+    // headroom; on truncation we escalate up to MAX_CAP before giving up.
+    const baseMax = args.maxTokens ?? 16384;
+    const MAX_CAP = 32768;
 
     // Weak relay models sometimes echo the JSON Schema back instead of an instance.
     // It's valid JSON, so JSON.parse succeeds — detect it and treat as a miss.
@@ -98,28 +101,39 @@ export class OpenAICompatibleLLM implements LLMClient {
       }
     };
 
-    // 1) strict json_schema (OpenAI); 2) json_object; 3) plain.
-    const attempts = [
-      {
-        model: this.model,
-        messages,
-        max_tokens: maxTokens,
-        response_format: { type: 'json_schema', json_schema: { name: 'result', schema: jsonSchema, strict: true } },
-      },
-      { model: this.model, messages, max_tokens: maxTokens, response_format: { type: 'json_object' } },
-      { model: this.model, messages, max_tokens: maxTokens },
+    // Response-format strategies, strongest first: 1) strict json_schema (OpenAI);
+    // 2) json_object; 3) plain.
+    const formats: any[] = [
+      { response_format: { type: 'json_schema', json_schema: { name: 'result', schema: jsonSchema, strict: true } } },
+      { response_format: { type: 'json_object' } },
+      {},
     ];
 
     let lastText = '';
     let lastErr: unknown = null;
-    for (const params of attempts) {
-      try {
-        const res = await this.create(params);
+    let truncated = false;
+
+    outer: for (const fmt of formats) {
+      let cap = baseMax;
+      // Retry the same format with a larger cap if the output was cut off mid-JSON.
+      for (;;) {
+        let res: any;
+        try {
+          res = await this.create({ model: this.model, messages, max_tokens: cap, ...fmt });
+        } catch (err) {
+          lastErr = err; // e.g. 401 auth / network — surface it if nothing else worked
+          break; // this format failed at the API level → try the next
+        }
         lastText = res.choices?.[0]?.message?.content ?? '';
         const ok = tryParse(lastText);
         if (ok) return ok;
-      } catch (err) {
-        lastErr = err; // e.g. 401 auth / network — surface it if nothing else worked
+        if (res.choices?.[0]?.finish_reason === 'length') {
+          truncated = true;
+          if (cap >= MAX_CAP) break outer; // already maxed — bigger won't help
+          cap = Math.min(cap * 2, MAX_CAP);
+          continue; // retry this format with more room
+        }
+        break; // parsed-but-invalid or schema echo → try the next format
       }
     }
 
@@ -141,7 +155,7 @@ export class OpenAICompatibleLLM implements LLMClient {
         const res = await this.create({
           model: this.model,
           messages: fixMessages,
-          max_tokens: maxTokens,
+          max_tokens: MAX_CAP,
           response_format: { type: 'json_object' },
         });
         const ok = tryParse(res.choices?.[0]?.message?.content ?? '');
@@ -154,7 +168,9 @@ export class OpenAICompatibleLLM implements LLMClient {
     // If the API calls themselves failed (auth, network), surface that real error.
     if (lastErr && !lastText) throw lastErr;
     throw new Error(
-      '结构化解析失败：模型未返回可用 JSON（可能在思考中被 max_tokens 截断，或输出了非 JSON 文本）。' +
+      (truncated
+        ? '结构化解析失败：输出被 max_tokens 截断（已加大上限仍放不下）。请让该步输出更简短，或提高模型的最大输出上限。'
+        : '结构化解析失败：模型未返回可用 JSON（输出了非 JSON 文本或 schema 本身）。') +
         'Raw: ' +
         stripThink(lastText).slice(0, 300),
     );

@@ -158,33 +158,41 @@ export function App() {
     [patch, refreshMe],
   );
 
-  const start = useCallback(async () => {
-    const t = topic.trim();
-    if (!t || status === 'running') return;
-    // Pre-check: a full run needs runCost credits (charged step by step).
-    if (runCost !== null && user && user.credits < runCost) {
-      setBuyOpen(true);
-      return;
-    }
-    closeRef.current?.();
-    setAgents(freshAgents(stages));
-    setPaper(null);
-    setStatus('running');
-    try {
-      const override = buildOverride(settings, presets);
-      const runId = await startRun(t, override, language);
-      closeRef.current = streamRun(runId, handleEvent);
-    } catch (err) {
-      setStatus('idle');
-      if (err instanceof ApiError && err.needCredits) {
-        setBuyOpen(true); // out of credits → prompt top-up
-      } else {
-        alert((err as Error).message);
+  // Run the pipeline on a specific, chosen topic. Reached only after the user
+  // picks from the topic options — never straight from a broad direction.
+  const run = useCallback(
+    async (topicText: string) => {
+      const t = topicText.trim();
+      if (!t || status === 'running') return;
+      // Pre-check: a full run needs runCost credits (charged step by step).
+      if (runCost !== null && user && user.credits < runCost) {
+        setBuyOpen(true);
+        return;
       }
-    }
-  }, [topic, status, handleEvent, settings, presets, language, stages, runCost, user]);
+      setTopic(t);
+      setSuggestions(null);
+      closeRef.current?.();
+      setAgents(freshAgents(stages));
+      setPaper(null);
+      setStatus('running');
+      try {
+        const override = buildOverride(settings, presets);
+        const runId = await startRun(t, override, language);
+        closeRef.current = streamRun(runId, handleEvent);
+      } catch (err) {
+        setStatus('idle');
+        if (err instanceof ApiError && err.needCredits) {
+          setBuyOpen(true); // out of credits → prompt top-up
+        } else {
+          alert((err as Error).message);
+        }
+      }
+    },
+    [status, handleEvent, settings, presets, language, stages, runCost, user],
+  );
 
-  // Turn the current input (a broad direction) into focused topic options. Free.
+  // Step 1: turn the broad direction into focused topic options (free). This is
+  // the mandatory gate before the pipeline — the user must pick a topic first.
   const suggest = useCallback(async () => {
     const d = topic.trim();
     if (!d || suggesting || status === 'running') return;
@@ -262,44 +270,40 @@ export function App() {
       <div className="composer">
         <input
           value={topic}
-          placeholder="输入研究课题，例如：大语言模型在系统性文献综述中的应用"
+          placeholder="输入大体研究方向，例如：大语言模型在教育中的应用"
           onChange={(e) => setTopic(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && start()}
-          disabled={status === 'running'}
+          onKeyDown={(e) => e.key === 'Enter' && suggest()}
+          disabled={status === 'running' || suggesting}
         />
         <button
-          className="suggest-btn"
           onClick={suggest}
           disabled={status === 'running' || suggesting || !topic.trim()}
-          title="把宽泛方向变成几个聚焦、可直接研究的课题"
+          title="先把大体方向变成几个聚焦课题，选定后再进入研究"
         >
-          {suggesting ? '生成中…' : '获取选题建议'}
-        </button>
-        <button onClick={start} disabled={status === 'running' || !topic.trim()}>
-          {status === 'running' ? '研究中…' : '开始研究'}
+          {suggesting ? '生成课题中…' : status === 'running' ? '研究中…' : '获取课题选项'}
         </button>
       </div>
 
       {suggestions && (
         <div className="suggestions">
           <div className="suggestions-head">
-            <span>选择一个聚焦课题（点选即填入，可再编辑）</span>
+            <span>选择一个课题开始研究（点选即进入文献调研，消耗 {runCost ?? '—'} 积分）</span>
             <button className="link-btn" onClick={() => setSuggestions(null)}>
-              收起
+              返回修改方向
             </button>
           </div>
+
+          {/* Escape hatch: proceed with the user's own wording. */}
+          <button className="suggestion own" onClick={() => run(topic)}>
+            <span className="suggestion-title">直接用我输入的方向</span>
+            <span className="suggestion-why">{topic.trim()}</span>
+          </button>
+
           {suggestions.length === 0 ? (
-            <div className="empty">未能生成选题，换个方向再试。</div>
+            <div className="empty">未能生成更多聚焦课题，可直接用上面的方向开始。</div>
           ) : (
             suggestions.map((s, i) => (
-              <button
-                key={i}
-                className="suggestion"
-                onClick={() => {
-                  setTopic(s.title);
-                  setSuggestions(null);
-                }}
-              >
+              <button key={i} className="suggestion" onClick={() => run(s.title)}>
                 <span className="suggestion-title">{s.title}</span>
                 <span className="suggestion-why">{s.rationale}</span>
               </button>
@@ -322,7 +326,7 @@ export function App() {
       )}
 
       {status === 'idle' ? (
-        <div className="empty">输入课题并点击「开始研究」，实时观察每个阶段各 Agent 的思考与产出，最后得到可导出的论文成稿。</div>
+        <div className="empty">输入大体研究方向 →「获取课题选项」→ 选定一个聚焦课题,再进入文献调研与论文写作,实时观察每个 Agent 的思考与产出,最后得到可导出的论文成稿。</div>
       ) : (
         stages.map((stage) => {
           const st = stageStatusOf(stage, agents);

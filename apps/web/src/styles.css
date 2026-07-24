@@ -455,14 +455,10 @@ header .sub {
   color: var(--accent);
 }
 
-/* Secondary "suggest topics" button sits beside the primary composer button. */
-.composer .suggest-btn {
+/* The "use my own wording" escape-hatch card, set apart from AI suggestions. */
+.suggestion.own {
+  border-style: dashed;
   background: var(--panel-2);
-  color: var(--text);
-  border: 1px solid var(--border);
-}
-.composer .suggest-btn:hover:not(:disabled) {
-  border-color: var(--accent);
 }
 
 .suggestions {
