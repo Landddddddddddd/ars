@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { exportLatex, exportDocx, exportPdf } from '../lib/exporters.js';
 
 export interface PaperData {
   title: string;
@@ -27,6 +28,7 @@ export function isPaperData(data: unknown): data is PaperData {
 
 export function PaperExport({ paper }: { paper: PaperData }) {
   const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
 
   const copy = async () => {
     try {
@@ -51,6 +53,33 @@ export function PaperExport({ paper }: { paper: PaperData }) {
     URL.revokeObjectURL(url);
   };
 
+  const downloadLatex = () => {
+    try {
+      exportLatex(paper);
+    } catch (err) {
+      alert('LaTeX 导出失败：' + (err as Error).message);
+    }
+  };
+
+  const downloadDocx = async () => {
+    setBusy('docx');
+    try {
+      await exportDocx(paper);
+    } catch (err) {
+      alert('DOCX 导出失败：' + (err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const downloadPdf = () => {
+    try {
+      exportPdf(paper);
+    } catch (err) {
+      alert('PDF 导出失败：' + (err as Error).message);
+    }
+  };
+
   return (
     <div className="paper">
       <div className="paper-head">
@@ -61,6 +90,15 @@ export function PaperExport({ paper }: { paper: PaperData }) {
           </button>
           <button className="paper-btn primary" onClick={download}>
             下载 .md
+          </button>
+          <button className="paper-btn" onClick={downloadLatex}>
+            下载 .tex
+          </button>
+          <button className="paper-btn" onClick={downloadDocx} disabled={busy === 'docx'}>
+            {busy === 'docx' ? '生成中…' : '下载 .docx'}
+          </button>
+          <button className="paper-btn" onClick={downloadPdf}>
+            导出 PDF
           </button>
         </div>
       </div>

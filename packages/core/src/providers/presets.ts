@@ -55,6 +55,19 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     needsKey: true,
   },
 
+  // ── 腾讯混元 Hunyuan（OpenAI 兼容端点）──────────────────────
+  // 混元提供标准 OpenAI 兼容 /v1/chat/completions，Bearer 鉴权，
+  // 因此直接复用 OpenAICompatibleLLM，无需额外 provider 类型。
+  {
+    id: 'hunyuan',
+    label: '腾讯混元 Hunyuan',
+    provider: 'openai',
+    baseURL: 'https://api.hunyuan.cloud.tencent.com/v1',
+    models: ['hunyuan-turbos-latest', 'hunyuan-t1-latest', 'hunyuan-large', 'hunyuan-turbo'],
+    needsKey: true,
+    note: '在 hunyuan.tencent.com 申请的 API Key（Bearer 鉴权）。端点为 OpenAI 兼容 /v1。',
+  },
+
   // ── DeepSeek（全球单一端点）─────────────────────────────────
   {
     id: 'deepseek',

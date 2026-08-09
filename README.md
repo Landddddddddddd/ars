@@ -57,6 +57,10 @@ The web UI has a **模型设置 (Model settings)** panel. Pick a preset and past
 
 - **默认** — use the server's `.env` credentials (no input needed).
 - **Anthropic 官方 / 兼容中转** — Anthropic Messages API (official or any relay).
+- **腾讯混元 Hunyuan** — native preset for Hunyuan's OpenAI-compatible endpoint
+  (`https://api.hunyuan.cloud.tencent.com/v1`), models `hunyuan-turbos-latest` /
+  `hunyuan-t1-latest` / `hunyuan-large` / `hunyuan-turbo`. Bring the key from
+  hunyuan.tencent.com (Bearer auth).
 - **OpenAI-compatible** — OpenAI, DeepSeek, Moonshot/Kimi, 智谱 GLM, OpenRouter, or a
   fully custom Base URL. Almost every model provider exposes an OpenAI-compatible endpoint.
 
@@ -65,6 +69,18 @@ server, which forwards it to the provider you chose — it is never persisted or
 server-side. The provider layer lives in `packages/core/src/providers/` (`anthropic.ts`,
 `openai.ts`, `factory.ts`, `presets.ts`); agents call a single `LLMClient` interface, so
 they are provider-agnostic.
+
+## Export
+
+The finished paper can be downloaded in multiple formats (all generated client-side, no
+server round-trip):
+
+- **Markdown** (`.md`) — the pre-assembled document.
+- **LaTeX** (`.tex`) — a self-contained `article` with `ctex` (CJK), `hyperref`, and a
+  `thebibliography` built from the verified references.
+- **Word** (`.docx`) — a real OOXML file via the `docx` library (title, abstract,
+  headings, references).
+- **PDF** — a print-optimized view; the browser's print dialog lets you "Save as PDF".
 
 ## Paid layer — accounts, credits, payments
 
