@@ -125,6 +125,34 @@ stage** and pay only for it:
   the stages actually being executed.
 - Credits are gated on the **selected** cost, still refunded in full if the run fails.
 
+## Output quality
+
+Two mechanisms keep the generated paper from shipping defects silently.
+
+**1. Generation-time constraints.** The section writer receives explicit, language-aware
+requirements instead of a bare "write this section": a length target (400–700 汉字 /
+300–500 English words), one paragraph per outline bullet, claim → reasoning → evidence →
+boundary structure, a ban on invented numbers and datasets (an unknown quantity must be
+marked `待补充` rather than fabricated), and no nested Markdown headings (which would
+break the exporters' heading hierarchy).
+
+**2. A post-draft QA gate** (`packages/core/src/qa.ts`) — pure, dependency-free and fully
+unit-tested. It runs after the final stage and emits a `run.qa` event that the UI renders
+as a report above the finished paper:
+
+| Check | Severity |
+|---|---|
+| Title missing/placeholder, empty section, no sections, no references | error |
+| Citation key used in the body but missing from the reference list (broken link) | error |
+| Reference whose title never passed citation verification — **anti-fabrication guard** | error |
+| Section below the length floor; reference never cited; duplicate reference | warn |
+| Duplicate paragraph across sections | warn |
+| Over-long title/abstract, missing year, nested headings | info |
+
+It also reports stats: section count, word count, reference count and the **cited ratio**
+(share of references actually cited). The gate is advisory by design — it surfaces
+problems rather than silently rewriting the generated text.
+
 ## Tests
 
 ```bash

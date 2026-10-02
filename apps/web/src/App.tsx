@@ -10,6 +10,7 @@ import {
   fetchRun,
   deleteRun,
   type TEvent,
+  type QAIssue,
   type ProviderPreset,
   type OutputLanguage,
   type StageInfo,
@@ -112,6 +113,14 @@ export function App() {
   const [selectedStages, setSelectedStages] = useState<string[]>([]);
   // The subset the server actually announced for the current run.
   const [activeStages, setActiveStages] = useState<string[] | null>(null);
+  // Post-draft quality report (emitted as a run.qa event by the pipeline).
+  const [qa, setQa] = useState<QAIssue[] | null>(null);
+  const [qaStats, setQaStats] = useState<{
+    sections: number;
+    words: number;
+    references: number;
+    citedRatio: number;
+  } | null>(null);
 
   const toggleStage = useCallback((id: string) => {
     setSelectedStages((prev) =>
@@ -150,6 +159,8 @@ export function App() {
       setSuggestions(null);
       setAgents(freshAgents(stages));
       setPaper(null);
+      setQa(null);
+      setQaStats(null);
       setActiveStages(null); // re-derived from the replayed run.stages event
       setStatus(snap.status === 'running' ? 'running' : (snap.status as Status));
       for (const e of snap.events ?? []) handleEvent(e as TEvent);
@@ -239,6 +250,10 @@ export function App() {
         case 'run.stages':
           setActiveStages(Array.isArray(e.stages) ? e.stages : null);
           break;
+        case 'run.qa':
+          setQa(Array.isArray(e.issues) ? (e.issues as QAIssue[]) : []);
+          setQaStats(e.stats ?? null);
+          break;
         case 'run.done':
           setStatus('done');
           loadHistory(); // the finished run is now archived — refresh the list
@@ -269,6 +284,8 @@ export function App() {
       closeRef.current?.();
       setAgents(freshAgents(stages));
       setPaper(null);
+      setQa(null);
+      setQaStats(null);
       setActiveStages(null);
       setStatus('running');
       try {
@@ -568,6 +585,45 @@ export function App() {
             </section>
           );
         })
+      )}
+
+      {qa && qa.length > 0 && (
+        <div className="qa-panel">
+          <div className="qa-head">
+            <span className="paper-badge">成稿质检</span>
+            <span className="qa-counts">
+              {qa.filter((i) => i.severity === 'error').length > 0 && (
+                <span className="qa-chip error">
+                  {qa.filter((i) => i.severity === 'error').length} 项严重
+                </span>
+              )}
+              {qa.filter((i) => i.severity === 'warn').length > 0 && (
+                <span className="qa-chip warn">
+                  {qa.filter((i) => i.severity === 'warn').length} 项提醒
+                </span>
+              )}
+              {qa.filter((i) => i.severity === 'info').length > 0 && (
+                <span className="qa-chip info">
+                  {qa.filter((i) => i.severity === 'info').length} 项提示
+                </span>
+              )}
+              {qaStats && (
+                <span className="qa-meta">
+                  {qaStats.sections} 节 · 约 {qaStats.words} 词 · {qaStats.references} 条参考文献 ·
+                  引用覆盖 {Math.round(qaStats.citedRatio * 100)}%
+                </span>
+              )}
+            </span>
+          </div>
+          <ul className="qa-list">
+            {qa.map((issue, i) => (
+              <li key={i} className={`qa-item ${issue.severity}`}>
+                <span className="qa-sev">{issue.severity}</span>
+                {issue.message}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {paper && <PaperExport paper={paper} />}

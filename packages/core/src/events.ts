@@ -1,4 +1,5 @@
 import type { Paper, ResearchQuestion, Critique, CitationCheck } from './schemas.js';
+import type { QAIssue, DraftStats } from './qa.js';
 
 export type StageId = 'deep-research' | 'paper-drafting';
 
@@ -15,6 +16,8 @@ export type AgentEvent =
   | { type: 'agent.error'; agent: string; message: string }
   | { type: 'agent.done'; agent: string }
   | { type: 'stage.done'; stage: StageId }
+  // Post-draft quality report (structural + citation-integrity checks).
+  | { type: 'run.qa'; issues: QAIssue[]; stats: DraftStats }
   | { type: 'run.done'; runId: string }
   | { type: 'run.error'; message: string };
 

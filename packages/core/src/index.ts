@@ -45,6 +45,10 @@ export type { PipelineArgs, StageDef } from './pipeline.js';
 
 export { assembleMarkdown } from './draft.js';
 
+// Post-draft quality assurance (structural + citation-integrity checks).
+export { checkDraft, draftStats, summarizeIssues, countWords, citationKeysUsed } from './qa.js';
+export type { QAIssue, QASeverity, DraftStats, QAOptions } from './qa.js';
+
 export { suggestResearchTopics } from './suggest.js';
 export type { SuggestedTopic } from './suggest.js';
 

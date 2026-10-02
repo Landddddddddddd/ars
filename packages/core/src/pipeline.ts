@@ -1,6 +1,7 @@
 import type { LLMClient } from './providers/types.js';
 import type { ResearchContext } from './context.js';
 import { withLanguage } from './language.js';
+import { checkDraft, draftStats } from './qa.js';
 import type { Agent } from './agent.js';
 import type { AgentEvent, StageId } from './events.js';
 import {
@@ -112,6 +113,13 @@ export async function runPipeline({ ctx, llm, emit, stages }: PipelineArgs): Pro
   emit({ type: 'run.stages', stages: selected.map((s) => s.id) });
   for (const stage of selected) {
     await runStage(stage, ctx, langLlm, emit);
+  }
+  // Quality gate: report structural / citation problems instead of shipping
+  // them silently. Only meaningful when a draft was actually produced.
+  if (ctx.draft) {
+    const verifiedTitles = ctx.citationChecks.filter((c) => c.verified).map((c) => c.title);
+    const issues = checkDraft(ctx.draft, { verifiedTitles });
+    emit({ type: 'run.qa', issues, stats: draftStats(ctx.draft) });
   }
   emit({ type: 'run.done', runId: ctx.runId });
 }

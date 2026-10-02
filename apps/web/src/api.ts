@@ -103,6 +103,13 @@ export async function startRun(
 
 // ---- Run history -----------------------------------------------------------
 
+export interface QAIssue {
+  code: string;
+  severity: 'error' | 'warn' | 'info';
+  message: string;
+  sectionId?: string;
+}
+
 export interface RunSummary {
   id: string;
   topic: string;
