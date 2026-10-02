@@ -67,6 +67,21 @@ db.exec(`
     UNIQUE(provider, provider_ref)
   );
   CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
+
+  -- Archived research runs. The in-memory RunStore is ephemeral (a restart
+  -- wipes it); this table is the durable record so the UI can list and reopen
+  -- past runs after a server restart. The "events" column holds the full
+  -- TimestampedEvent snapshot as JSON — the same payload GET /api/runs/:id replays.
+  CREATE TABLE IF NOT EXISTS runs (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    topic      TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    events     TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_runs_user ON runs(user_id, updated_at DESC);
 `);
 
 export interface UserRow {

@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { exportLatex, exportDocx, exportPdf } from '../lib/exporters.js';
 
 export interface PaperData {
@@ -29,6 +31,18 @@ export function isPaperData(data: unknown): data is PaperData {
 export function PaperExport({ paper }: { paper: PaperData }) {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [preview, setPreview] = useState(false);
+
+  // Rendered markdown preview (sanitized — model output is untrusted HTML-wise).
+  const previewHtml = useMemo(() => {
+    if (!preview) return '';
+    try {
+      const raw = marked.parse(paper.markdown, { async: false }) as string;
+      return DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] });
+    } catch {
+      return '';
+    }
+  }, [preview, paper.markdown]);
 
   const copy = async () => {
     try {
@@ -80,11 +94,29 @@ export function PaperExport({ paper }: { paper: PaperData }) {
     }
   };
 
+  const downloadJson = () => {
+    const blob = new Blob([JSON.stringify(paper, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const slug = (paper.title || 'paper').replace(/[^\w一-龥]+/g, '-').slice(0, 60);
+    a.href = url;
+    a.download = `${slug || 'paper'}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="paper">
       <div className="paper-head">
         <span className="paper-badge">成稿</span>
         <div className="paper-actions">
+          <button className="paper-btn" onClick={() => setPreview((p) => !p)}>
+            {preview ? '返回结构视图' : '渲染预览'}
+          </button>
           <button className="paper-btn" onClick={copy}>
             {copied ? '✓ 已复制' : '复制全文'}
           </button>
@@ -100,45 +132,59 @@ export function PaperExport({ paper }: { paper: PaperData }) {
           <button className="paper-btn" onClick={downloadPdf}>
             导出 PDF
           </button>
+          <button className="paper-btn" onClick={downloadJson}>
+            下载 .json
+          </button>
         </div>
       </div>
 
-      <h2 className="paper-title">{paper.title}</h2>
-      {paper.abstract && (
-        <p className="paper-abstract">
-          <b>摘要　</b>
-          {paper.abstract}
-        </p>
-      )}
+      {preview ? (
+        // Rendered markdown view of the assembled paper.
+        <div
+          className="paper-preview"
+          // Sanitized above with DOMPurify.
+          dangerouslySetInnerHTML={{ __html: previewHtml }}
+        />
+      ) : (
+        <>
+          <h2 className="paper-title">{paper.title}</h2>
+          {paper.abstract && (
+            <p className="paper-abstract">
+              <b>摘要　</b>
+              {paper.abstract}
+            </p>
+          )}
 
-      {paper.sections.map((s) => (
-        <section key={s.id} className="paper-section">
-          <h3>{s.title}</h3>
-          <pre className="paper-body">{s.content}</pre>
-        </section>
-      ))}
+          {paper.sections.map((s) => (
+            <section key={s.id} className="paper-section">
+              <h3>{s.title}</h3>
+              <pre className="paper-body">{s.content}</pre>
+            </section>
+          ))}
 
-      {paper.references.length > 0 && (
-        <section className="paper-section">
-          <h3>参考文献</h3>
-          <ol className="paper-refs">
-            {paper.references.map((r, i) => (
-              <li key={i}>
-                <span className="muted">[{r.citationKey}]</span> {r.authors.join(', ')} (
-                {r.year ?? 'n.d.'}). <b>{r.title}</b>
-                {r.venue ? `. ${r.venue}` : ''}
-                {r.url && (
-                  <>
-                    {' '}
-                    <a href={r.url} target="_blank" rel="noreferrer">
-                      链接
-                    </a>
-                  </>
-                )}
-              </li>
-            ))}
-          </ol>
-        </section>
+          {paper.references.length > 0 && (
+            <section className="paper-section">
+              <h3>参考文献</h3>
+              <ol className="paper-refs">
+                {paper.references.map((r, i) => (
+                  <li key={i}>
+                    <span className="muted">[{r.citationKey}]</span> {r.authors.join(', ')} (
+                    {r.year ?? 'n.d.'}). <b>{r.title}</b>
+                    {r.venue ? `. ${r.venue}` : ''}
+                    {r.url && (
+                      <>
+                        {' '}
+                        <a href={r.url} target="_blank" rel="noreferrer">
+                          链接
+                        </a>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
+        </>
       )}
     </div>
   );
