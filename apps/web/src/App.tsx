@@ -6,12 +6,15 @@ import {
   fetchStages,
   fetchPricing,
   suggestTopics,
+  fetchRuns,
+  fetchRun,
   type TEvent,
   type ProviderPreset,
   type OutputLanguage,
   type StageInfo,
   type Pricing,
   type SuggestedTopic,
+  type RunSummary,
 } from './api.js';
 import { AgentCard, type AgentState } from './components/AgentCard.js';
 import { PaperExport, isPaperData, type PaperData } from './components/PaperExport.js';
@@ -28,6 +31,20 @@ import { BuyCredits } from './components/BuyCredits.js';
 
 const LS_KEY = 'ars.settings';
 const LS_LANG = 'ars.lang';
+const LS_RUN = 'ars.lastRunId';
+
+function fmtTime(ts: number): string {
+  try {
+    return new Date(ts).toLocaleString([], {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
 
 const LANG_OPTIONS: { value: OutputLanguage; label: string }[] = [
   { value: 'auto', label: '自动（跟随课题）' },
@@ -84,6 +101,40 @@ export function App() {
     () => (localStorage.getItem(LS_LANG) as OutputLanguage) || 'auto',
   );
   const closeRef = useRef<null | (() => void)>(null);
+
+  // ---- Run history (durable on the server; survives refresh & restarts) ----
+  const [history, setHistory] = useState<RunSummary[] | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  const loadHistory = useCallback(() => {
+    fetchRuns()
+      .then((runs) => setHistory(runs))
+      .catch(() => setHistory(null));
+  }, []);
+
+  const openRun = useCallback(
+    async (id: string) => {
+      if (status === 'running') return;
+      const snap = await fetchRun(id);
+      if (!snap) return;
+      closeRef.current?.();
+      closeRef.current = null;
+      localStorage.setItem(LS_RUN, id);
+      setTopic(snap.topic);
+      setSuggestions(null);
+      setAgents(freshAgents(stages));
+      setPaper(null);
+      setStatus(snap.status === 'running' ? 'running' : (snap.status as Status));
+      for (const e of snap.events ?? []) handleEvent(e as TEvent);
+      // A still-running (live) run keeps streaming; archived ones are terminal.
+      if (snap.status === 'running') closeRef.current = streamRun(snap.id, handleEvent);
+    },
+    [status, stages, handleEvent],
+  );
+
+  useEffect(() => {
+    if (user) loadHistory();
+  }, [user, loadHistory]);
 
   useEffect(() => {
     fetchProviders()
@@ -148,14 +199,16 @@ export function App() {
           break;
         case 'run.done':
           setStatus('done');
+          loadHistory(); // the finished run is now archived — refresh the list
           break;
         case 'run.error':
           setStatus('error');
           refreshMe(); // a failed run refunds credits — reflect the new balance
+          loadHistory();
           break;
       }
     },
-    [patch, refreshMe],
+    [patch, refreshMe, loadHistory],
   );
 
   // Run the pipeline on a specific, chosen topic. Reached only after the user
@@ -178,6 +231,7 @@ export function App() {
       try {
         const override = buildOverride(settings, presets);
         const runId = await startRun(t, override, language);
+        localStorage.setItem(LS_RUN, runId);
         closeRef.current = streamRun(runId, handleEvent);
       } catch (err) {
         setStatus('idle');
@@ -282,6 +336,45 @@ export function App() {
         >
           {suggesting ? '生成课题中…' : status === 'running' ? '研究中…' : '获取课题选项'}
         </button>
+      </div>
+
+      <div className="history">
+        <button
+          className="history-toggle"
+          onClick={() => {
+            setHistoryOpen((o) => !o);
+            loadHistory();
+          }}
+        >
+          🕘 历史记录{history ? `（${history.length}）` : ''}
+        </button>
+        {historyOpen && (
+          <div className="history-panel">
+            {!history ? (
+              <div className="empty">历史加载中…</div>
+            ) : history.length === 0 ? (
+              <div className="empty">还没有历史运行——完成一次研究后会自动存档，刷新页面也不会丢。</div>
+            ) : (
+              history.map((r) => (
+                <button
+                  key={r.id}
+                  className="history-item"
+                  onClick={() => openRun(r.id)}
+                  title="点击恢复这次运行的完整过程与成稿"
+                >
+                  <span
+                    className={`stage-dot ${
+                      r.status === 'done' ? 'done' : r.status === 'error' ? 'error' : 'running'
+                    }`}
+                  />
+                  <span className="history-topic">{r.topic}</span>
+                  <span className="history-meta">{fmtTime(r.updatedAt)}</span>
+                  <span className="history-meta">{r.source === 'archived' ? '存档' : '进行中'}</span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       {suggestions && (

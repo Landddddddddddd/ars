@@ -95,6 +95,37 @@ export async function startRun(
   return j.runId as string;
 }
 
+// ---- Run history -----------------------------------------------------------
+
+export interface RunSummary {
+  id: string;
+  topic: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  source: 'live' | 'archived';
+}
+
+export async function fetchRuns(): Promise<RunSummary[]> {
+  const r = await fetch('/api/runs', { credentials: 'include' });
+  if (!r.ok) return [];
+  const j = await r.json();
+  return (j.runs ?? []) as RunSummary[];
+}
+
+export interface RunSnapshot {
+  id: string;
+  topic: string;
+  status: string;
+  events: TEvent[];
+}
+
+export async function fetchRun(id: string): Promise<RunSnapshot | null> {
+  const r = await fetch(`/api/runs/${encodeURIComponent(id)}`, { credentials: 'include' });
+  if (!r.ok) return null;
+  return (await r.json()) as RunSnapshot;
+}
+
 // ---- Auth ------------------------------------------------------------------
 
 export interface AuthUser {

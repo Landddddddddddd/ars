@@ -35,6 +35,13 @@ export class RunStore {
     return this.runs.get(id);
   }
 
+  /** All runs belonging to a user (newest first) — used by the history list. */
+  listFor(userId: string): Run[] {
+    return [...this.runs.values()]
+      .filter((r) => r.userId === userId)
+      .sort((a, b) => (b.events[b.events.length - 1]?.ts ?? 0) - (a.events[a.events.length - 1]?.ts ?? 0));
+  }
+
   emit(run: Run, event: AgentEvent): void {
     const te: TimestampedEvent = { ...event, ts: Date.now(), seq: run.seq++ };
     run.events.push(te);

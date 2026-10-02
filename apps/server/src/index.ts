@@ -18,6 +18,7 @@ import {
 } from '@ars/core';
 import type { TimestampedEvent, ProviderConfig } from '@ars/core';
 import { RunStore } from './runStore.js';
+import { archiveRun, listArchivedRuns, getArchivedRun, type RunSummary } from './runArchive.js';
 import { authRoutes } from './routes/auth.js';
 import { billingRoutes } from './routes/billing.js';
 import { requireAuth, type AuthVars } from './auth.js';
@@ -149,6 +150,9 @@ app.post('/api/runs', requireAuth, async (c) => {
       }
     }
     store.emit(run, e);
+    // Persist the terminal snapshot so the run shows up in history after a
+    // server restart. Non-terminal events are ignored by archiveRun's caller.
+    if (e.type === 'run.done' || e.type === 'run.error') archiveRun(run);
   };
 
   // Fire-and-forget; events flow to SSE subscribers. A thrown error emits
@@ -166,11 +170,36 @@ app.post('/api/runs', requireAuth, async (c) => {
   });
 });
 
-// Snapshot of a run (status + all events so far). Owner-only.
+// History list for the signed-in user: live runs (may still be running) merged
+// with archived terminal runs, newest first. Owner-only.
+app.get('/api/runs', requireAuth, (c) => {
+  const userId = c.get('user').id;
+  const live: RunSummary[] = store
+    .listFor(userId)
+    .map((r) => ({
+      id: r.id,
+      topic: r.topic,
+      status: r.status,
+      createdAt: r.events[0]?.ts ?? Date.now(),
+      updatedAt: r.events[r.events.length - 1]?.ts ?? Date.now(),
+      source: 'live' as const,
+    }));
+  const seen = new Set(live.map((r) => r.id));
+  const archived = listArchivedRuns(userId).filter((r) => !seen.has(r.id));
+  const all = [...live, ...archived].sort((a, b) => b.updatedAt - a.updatedAt);
+  return c.json({ runs: all });
+});
+
+// Snapshot of a run (status + all events so far). Falls back to the durable
+// archive when the run is no longer in memory (e.g. after a restart). Owner-only.
 app.get('/api/runs/:id', requireAuth, (c) => {
   const run = store.get(c.req.param('id') ?? '');
-  if (!run || run.userId !== c.get('user').id) return c.json({ error: 'not found' }, 404);
-  return c.json({ id: run.id, topic: run.topic, status: run.status, events: run.events });
+  if (run && run.userId === c.get('user').id) {
+    return c.json({ id: run.id, topic: run.topic, status: run.status, events: run.events });
+  }
+  const archived = getArchivedRun(c.req.param('id') ?? '', c.get('user').id);
+  if (!archived) return c.json({ error: 'not found' }, 404);
+  return c.json(archived);
 });
 
 // Live event stream (replays history, then tails). Reconnect-safe. Owner-only.

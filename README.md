@@ -57,6 +57,10 @@ The web UI has a **模型设置 (Model settings)** panel. Pick a preset and past
 
 - **默认** — use the server's `.env` credentials (no input needed).
 - **Anthropic 官方 / 兼容中转** — Anthropic Messages API (official or any relay).
+- **腾讯混元 Hunyuan** — native preset for Hunyuan's OpenAI-compatible endpoint
+  (`https://api.hunyuan.cloud.tencent.com/v1`), models `hunyuan-turbos-latest` /
+  `hunyuan-t1-latest` / `hunyuan-large` / `hunyuan-turbo`. Bring the key from
+  hunyuan.tencent.com (Bearer auth).
 - **OpenAI-compatible** — OpenAI, DeepSeek, Moonshot/Kimi, 智谱 GLM, OpenRouter, or a
   fully custom Base URL. Almost every model provider exposes an OpenAI-compatible endpoint.
 
@@ -65,6 +69,48 @@ server, which forwards it to the provider you chose — it is never persisted or
 server-side. The provider layer lives in `packages/core/src/providers/` (`anthropic.ts`,
 `openai.ts`, `factory.ts`, `presets.ts`); agents call a single `LLMClient` interface, so
 they are provider-agnostic.
+
+## Export
+
+The finished paper can be downloaded in multiple formats (all generated client-side, no
+server round-trip):
+
+- **Markdown** (`.md`) — the pre-assembled document.
+- **LaTeX** (`.tex`) — a self-contained `article` with `ctex` (CJK), `hyperref`, and a
+  `thebibliography` built from the verified references.
+- **Word** (`.docx`) — a real OOXML file via the `docx` library (title, abstract,
+  headings, references).
+- **PDF** — a print-optimized view; the browser's print dialog lets you "Save as PDF".
+- **JSON** (`.json`) — the structured paper object (title/abstract/sections/references +
+  the assembled Markdown), handy for scripting or re-importing.
+- **渲染预览** — a rendered Markdown view of the assembled document inside the UI, so the
+  finished paper can be read without exporting first.
+
+## Run history
+
+Finished runs are **archived to SQLite**, so they survive a page refresh *and* a server
+restart (the live run store itself stays in memory, which is what streams events):
+
+- On `run.done` / `run.error`, the run's full event snapshot is written to the `runs`
+  table (`apps/server/src/runArchive.ts`). Re-archiving the same id overwrites it.
+- `GET /api/runs` lists the signed-in user's runs — live runs first, then archived,
+  newest first.
+- `GET /api/runs/:id` replays a snapshot: it serves the live run when present and falls
+  back to the archive afterwards, so reopening a past run restores the entire agent
+  timeline and the finished paper.
+
+Both endpoints are owner-only (401 without a session, 404 for another user's run).
+
+## Tests
+
+```bash
+npm test          # vitest run
+npm run test:watch
+```
+
+Unit tests live in `packages/core/test/` and cover the pure, dependency-free parts of the
+framework: Markdown assembly (`draft.ts`), every Zod schema, the language-injection
+wrapper, the agent registry, and the pipeline shape (unique agent names, stage ownership).
 
 ## Paid layer — accounts, credits, payments
 
@@ -80,7 +126,8 @@ server carries **near-zero LLM cost**.
   with `402` and the UI opens the top-up dialog.
 - **Persistence:** SQLite (`better-sqlite3`) at `DATABASE_PATH` — the first persistent
   layer. Tables: `users`, `sessions`, `ledger` (audit trail), `payments` (idempotent by
-  `provider + ref`, so a doubled webhook never double-credits).
+  `provider + ref`, so a doubled webhook never double-credits), `runs` (archived research
+  runs + their event snapshots).
 - **Payments** are pluggable via `PAYMENT_PROVIDER` — **one codebase, two sites**:
 
   | Site | `PAYMENT_PROVIDER` | `SITE_CURRENCY` | Status |
@@ -126,8 +173,8 @@ docker run -p 8787:8787 -v ars-data:/data \
   env vars (`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` or `ANTHROPIC_API_KEY`) only if you
   want the "默认（服务器 .env）" option to work for everyone; otherwise leave them unset.
 - The server binds `PORT` (platforms set this automatically).
-- The credit database is persisted at `DATABASE_PATH`; **research runs themselves** are
-  still kept in memory (fine for live streaming — add run-history persistence later).
+- The credit database is persisted at `DATABASE_PATH`; finished **research runs** are
+  archived in the same database (`runs` table), so history survives restarts.
 
 ## Milestone roadmap
 
