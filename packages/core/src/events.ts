@@ -4,6 +4,9 @@ export type StageId = 'deep-research' | 'paper-drafting';
 
 export type AgentEvent =
   | { type: 'run.start'; runId: string; topic: string }
+  // Which stages this run will execute — lets the UI render only the selected
+  // stages when a subset was requested instead of the full pipeline.
+  | { type: 'run.stages'; stages: string[] }
   | { type: 'stage.start'; stage: StageId; title: string }
   | { type: 'agent.start'; agent: string; title: string; stage: StageId }
   | { type: 'agent.thinking'; agent: string; delta: string }

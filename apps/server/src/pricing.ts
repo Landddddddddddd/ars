@@ -68,3 +68,20 @@ export function costBreakdown(): StageCost[] {
     subtotal: s.agents.length * stageStepCost(s.id),
   }));
 }
+
+/**
+ * Total credits for a run that executes only the given stage subset. Unknown ids
+ * are ignored; an empty/unknown selection falls back to the full run (matching
+ * `resolveStages` in the core package), so the charged amount always equals the
+ * number of steps that will actually run.
+ */
+export function costForStages(ids?: string[] | null): number {
+  if (!ids || ids.length === 0) return FULL_RUN_COST;
+  const wanted = new Set(ids);
+  const picked = costBreakdown().filter((s) => wanted.has(s.id));
+  if (picked.length === 0) return FULL_RUN_COST;
+  return picked.reduce((sum, s) => sum + s.subtotal, 0);
+}
+
+/** Ids of every selectable stage — used to validate API input. */
+export const STAGE_IDS: string[] = STAGES.map((s) => s.id);

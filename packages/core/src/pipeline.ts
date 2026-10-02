@@ -61,6 +61,20 @@ export interface PipelineArgs {
   ctx: ResearchContext;
   llm: LLMClient;
   emit: (e: AgentEvent) => void;
+  /**
+   * Optional stage subset to run (e.g. only 'deep-research'). When omitted or
+   * empty, the full pipeline runs. Unknown ids are ignored; if no valid id
+   * remains, this falls back to the full pipeline rather than running nothing.
+   */
+  stages?: string[];
+}
+
+/** Resolve a requested stage-id subset into ordered stage definitions. */
+export function resolveStages(ids?: string[] | null): StageDef[] {
+  if (!ids || ids.length === 0) return STAGES;
+  const wanted = new Set(ids);
+  const picked = STAGES.filter((s) => wanted.has(s.id));
+  return picked.length > 0 ? picked : STAGES;
 }
 
 /** Run one stage's agents in order, isolating per-agent failures. */
@@ -91,10 +105,12 @@ async function runStage(
  * Run the full multi-stage pipeline (deep research → paper drafting).
  * Every agent's output follows the run's chosen language (injected once here).
  */
-export async function runPipeline({ ctx, llm, emit }: PipelineArgs): Promise<void> {
+export async function runPipeline({ ctx, llm, emit, stages }: PipelineArgs): Promise<void> {
   const langLlm = withLanguage(llm, ctx.language);
+  const selected = resolveStages(stages);
   emit({ type: 'run.start', runId: ctx.runId, topic: ctx.topic });
-  for (const stage of STAGES) {
+  emit({ type: 'run.stages', stages: selected.map((s) => s.id) });
+  for (const stage of selected) {
     await runStage(stage, ctx, langLlm, emit);
   }
   emit({ type: 'run.done', runId: ctx.runId });

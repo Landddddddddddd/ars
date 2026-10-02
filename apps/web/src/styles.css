@@ -817,3 +817,52 @@ header .sub {
   padding: 6px 10px;
   font-size: 0.95em;
 }
+
+/* ---- Stage picker + history rows --------------------------------------- */
+.stage-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+}
+.history-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.history-row .history-item {
+  flex: 1;
+}
+.history-del {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.history-del:hover:not(:disabled) {
+  border-color: var(--red);
+  color: var(--red);
+}
+.history-del:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.history-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.history-search input {
+  flex: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 13px;
+}

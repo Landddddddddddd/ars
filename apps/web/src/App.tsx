@@ -8,6 +8,7 @@ import {
   suggestTopics,
   fetchRuns,
   fetchRun,
+  deleteRun,
   type TEvent,
   type ProviderPreset,
   type OutputLanguage,
@@ -105,12 +106,37 @@ export function App() {
   // ---- Run history (durable on the server; survives refresh & restarts) ----
   const [history, setHistory] = useState<RunSummary[] | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyQuery, setHistoryQuery] = useState('');
 
-  const loadHistory = useCallback(() => {
-    fetchRuns()
+  // Empty selection = run every stage. Cost is re-fetched when this changes.
+  const [selectedStages, setSelectedStages] = useState<string[]>([]);
+  // The subset the server actually announced for the current run.
+  const [activeStages, setActiveStages] = useState<string[] | null>(null);
+
+  const toggleStage = useCallback((id: string) => {
+    setSelectedStages((prev) =>
+      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id],
+    );
+  }, []);
+
+  const loadHistory = useCallback((query?: string) => {
+    fetchRuns(query)
       .then((runs) => setHistory(runs))
       .catch(() => setHistory(null));
   }, []);
+
+  const removeRun = useCallback(
+    async (id: string) => {
+      if (status === 'running') return;
+      const ok = await deleteRun(id);
+      if (!ok) {
+        alert('删除失败：该运行可能仍在进行中，或已被删除。');
+        return;
+      }
+      loadHistory(historyQuery || undefined);
+    },
+    [status, historyQuery, loadHistory],
+  );
 
   const openRun = useCallback(
     async (id: string) => {
@@ -124,6 +150,7 @@ export function App() {
       setSuggestions(null);
       setAgents(freshAgents(stages));
       setPaper(null);
+      setActiveStages(null); // re-derived from the replayed run.stages event
       setStatus(snap.status === 'running' ? 'running' : (snap.status as Status));
       for (const e of snap.events ?? []) handleEvent(e as TEvent);
       // A still-running (live) run keeps streaming; archived ones are terminal.
@@ -150,6 +177,14 @@ export function App() {
       .then(setPricing)
       .catch(() => setPricing(null));
   }, []);
+
+  // Re-price whenever the stage selection changes, so the UI always quotes the
+  // cost of what will actually run.
+  useEffect(() => {
+    fetchPricing(selectedStages)
+      .then(setPricing)
+      .catch(() => setPricing(null));
+  }, [selectedStages]);
 
   useEffect(() => {
     localStorage.setItem(LS_KEY, JSON.stringify(settings));
@@ -197,6 +232,13 @@ export function App() {
         case 'agent.done':
           patch(e.agent, (a) => (a.status === 'error' ? a : { ...a, status: 'done' }));
           break;
+        case 'run.start':
+          setActiveStages(null);
+          break;
+        // Server-resolved stage subset: render only these stages for this run.
+        case 'run.stages':
+          setActiveStages(Array.isArray(e.stages) ? e.stages : null);
+          break;
         case 'run.done':
           setStatus('done');
           loadHistory(); // the finished run is now archived — refresh the list
@@ -227,10 +269,16 @@ export function App() {
       closeRef.current?.();
       setAgents(freshAgents(stages));
       setPaper(null);
+      setActiveStages(null);
       setStatus('running');
       try {
         const override = buildOverride(settings, presets);
-        const runId = await startRun(t, override, language);
+        const runId = await startRun(
+          t,
+          override,
+          language,
+          selectedStages.length > 0 ? selectedStages : null,
+        );
         localStorage.setItem(LS_RUN, runId);
         closeRef.current = streamRun(runId, handleEvent);
       } catch (err) {
@@ -242,7 +290,7 @@ export function App() {
         }
       }
     },
-    [status, handleEvent, settings, presets, language, stages, runCost, user],
+    [status, handleEvent, settings, presets, language, stages, runCost, user, selectedStages],
   );
 
   // Step 1: turn the broad direction into focused topic options (free). This is
@@ -262,6 +310,11 @@ export function App() {
       setSuggesting(false);
     }
   }, [topic, suggesting, status, settings, presets, language]);
+
+  const shownStages =
+    activeStages && activeStages.length > 0
+      ? stages.filter((s) => activeStages.includes(s.id))
+      : stages;
 
   if (loading) {
     return (
@@ -343,34 +396,67 @@ export function App() {
           className="history-toggle"
           onClick={() => {
             setHistoryOpen((o) => !o);
-            loadHistory();
+            loadHistory(historyQuery || undefined);
           }}
         >
           🕘 历史记录{history ? `（${history.length}）` : ''}
         </button>
         {historyOpen && (
           <div className="history-panel">
+            <div className="history-search">
+              <input
+                value={historyQuery}
+                placeholder="搜索课题关键词…"
+                onChange={(e) => setHistoryQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && loadHistory(historyQuery || undefined)}
+              />
+              <button className="paper-btn" onClick={() => loadHistory(historyQuery || undefined)}>
+                搜索
+              </button>
+              {historyQuery && (
+                <button
+                  className="link-btn"
+                  onClick={() => {
+                    setHistoryQuery('');
+                    loadHistory();
+                  }}
+                >
+                  清空
+                </button>
+              )}
+            </div>
             {!history ? (
               <div className="empty">历史加载中…</div>
             ) : history.length === 0 ? (
               <div className="empty">还没有历史运行——完成一次研究后会自动存档，刷新页面也不会丢。</div>
             ) : (
               history.map((r) => (
-                <button
-                  key={r.id}
-                  className="history-item"
-                  onClick={() => openRun(r.id)}
-                  title="点击恢复这次运行的完整过程与成稿"
-                >
-                  <span
-                    className={`stage-dot ${
-                      r.status === 'done' ? 'done' : r.status === 'error' ? 'error' : 'running'
-                    }`}
-                  />
-                  <span className="history-topic">{r.topic}</span>
-                  <span className="history-meta">{fmtTime(r.updatedAt)}</span>
-                  <span className="history-meta">{r.source === 'archived' ? '存档' : '进行中'}</span>
-                </button>
+                <div key={r.id} className="history-row">
+                  <button
+                    className="history-item"
+                    onClick={() => openRun(r.id)}
+                    title="点击恢复这次运行的完整过程与成稿"
+                  >
+                    <span
+                      className={`stage-dot ${
+                        r.status === 'done' ? 'done' : r.status === 'error' ? 'error' : 'running'
+                      }`}
+                    />
+                    <span className="history-topic">{r.topic}</span>
+                    <span className="history-meta">{fmtTime(r.updatedAt)}</span>
+                    <span className="history-meta">
+                      {r.source === 'archived' ? '存档' : '进行中'}
+                    </span>
+                  </button>
+                  <button
+                    className="history-del"
+                    title="删除这条历史记录"
+                    onClick={() => removeRun(r.id)}
+                    disabled={status === 'running'}
+                  >
+                    ✕
+                  </button>
+                </div>
               ))
             )}
           </div>
@@ -405,6 +491,37 @@ export function App() {
         </div>
       )}
 
+      <div className="stage-picker">
+        <span className="lang-label">执行阶段</span>
+        {stages.map((s) => {
+          const on = selectedStages.length === 0 || selectedStages.includes(s.id);
+          return (
+            <button
+              key={s.id}
+              className={`lang-btn ${on ? 'active' : ''}`}
+              disabled={status === 'running'}
+              onClick={() => {
+                // First click on an implicit "all" state selects just that one.
+                if (selectedStages.length === 0) setSelectedStages(stages.map((x) => x.id));
+                toggleStage(s.id);
+              }}
+              title={`${s.title} · ${pricing?.stages.find((p) => p.id === s.id)?.subtotal ?? '—'} 积分`}
+            >
+              {s.title}
+            </button>
+          );
+        })}
+        {selectedStages.length > 0 && (
+          <button
+            className="link-btn"
+            disabled={status === 'running'}
+            onClick={() => setSelectedStages([])}
+          >
+            恢复全部阶段
+          </button>
+        )}
+      </div>
+
       {pricing && (
         <div className="cost-hint">
           逐步计费：
@@ -421,7 +538,7 @@ export function App() {
       {status === 'idle' ? (
         <div className="empty">输入大体研究方向 →「获取课题选项」→ 选定一个聚焦课题,再进入文献调研与论文写作,实时观察每个 Agent 的思考与产出,最后得到可导出的论文成稿。</div>
       ) : (
-        stages.map((stage) => {
+        shownStages.map((stage) => {
           const st = stageStatusOf(stage, agents);
           const doneCount = stage.agents.filter(
             (a) => agents[a.name]?.status === 'done',

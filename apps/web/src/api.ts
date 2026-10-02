@@ -61,11 +61,16 @@ export interface StageCost {
 
 export interface Pricing {
   runCost: number;
+  fullRunCost?: number;
   stages: StageCost[];
 }
 
-export async function fetchPricing(): Promise<Pricing> {
-  const r = await fetch('/api/pricing');
+export async function fetchPricing(stages?: string[]): Promise<Pricing> {
+  const url =
+    stages && stages.length > 0
+      ? `/api/pricing?stages=${encodeURIComponent(stages.join(','))}`
+      : '/api/pricing';
+  const r = await fetch(url);
   return r.json();
 }
 
@@ -83,12 +88,13 @@ export async function startRun(
   topic: string,
   provider?: ProviderOverride | null,
   language: OutputLanguage = 'auto',
+  stages?: string[] | null,
 ): Promise<string> {
   const r = await fetch('/api/runs', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ topic, provider: provider ?? null, language }),
+    body: JSON.stringify({ topic, provider: provider ?? null, language, stages: stages ?? null }),
   });
   const j = await r.json();
   if (!r.ok) throw new ApiError(j.error ?? 'failed to start run', r.status, j.needCredits);
@@ -106,11 +112,21 @@ export interface RunSummary {
   source: 'live' | 'archived';
 }
 
-export async function fetchRuns(): Promise<RunSummary[]> {
-  const r = await fetch('/api/runs', { credentials: 'include' });
+export async function fetchRuns(query?: string): Promise<RunSummary[]> {
+  const url = query ? `/api/runs?q=${encodeURIComponent(query)}` : '/api/runs';
+  const r = await fetch(url, { credentials: 'include' });
   if (!r.ok) return [];
   const j = await r.json();
   return (j.runs ?? []) as RunSummary[];
+}
+
+/** Delete an archived run. Returns false if not found (or still running). */
+export async function deleteRun(id: string): Promise<boolean> {
+  const r = await fetch(`/api/runs/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  return r.ok;
 }
 
 export interface RunSnapshot {

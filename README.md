@@ -101,6 +101,30 @@ restart (the live run store itself stays in memory, which is what streams events
 
 Both endpoints are owner-only (401 without a session, 404 for another user's run).
 
+- **Search:** `GET /api/runs?q=<关键词>` filters by topic substring (case-insensitive,
+  `LOWER(topic) LIKE`), with `?limit=` (capped at 200).
+- **Delete:** `DELETE /api/runs/:id` removes an archived run. A still-running run is
+  refused with `409` — finish or reload first.
+
+## Stage selection (run only what you need)
+
+A full run executes both stages (10 agents, e.g. 22 credits). You can run **just one
+stage** and pay only for it:
+
+| Selection | Steps | Cost |
+|---|---|---|
+| Full pipeline | 4 + 6 | 22 |
+| `deep-research` only | 4 | 4 |
+| `paper-drafting` only | 6 | 18 |
+
+- `POST /api/runs` accepts `stages: ['deep-research']` (unknown ids are dropped; if
+  nothing valid remains it falls back to the full pipeline and charges accordingly).
+- `GET /api/pricing?stages=deep-research` returns the cost of that subset plus
+  `fullRunCost` for comparison.
+- The run emits a `run.stages` event with the resolved subset, so the UI renders only
+  the stages actually being executed.
+- Credits are gated on the **selected** cost, still refunded in full if the run fails.
+
 ## Tests
 
 ```bash

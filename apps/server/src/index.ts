@@ -18,12 +18,18 @@ import {
 } from '@ars/core';
 import type { TimestampedEvent, ProviderConfig } from '@ars/core';
 import { RunStore } from './runStore.js';
-import { archiveRun, listArchivedRuns, getArchivedRun, type RunSummary } from './runArchive.js';
+import { archiveRun, listArchivedRuns, getArchivedRun, deleteArchivedRun, type RunSummary } from './runArchive.js';
 import { authRoutes } from './routes/auth.js';
 import { billingRoutes } from './routes/billing.js';
 import { requireAuth, type AuthVars } from './auth.js';
 import { charge, refundRun, isInsufficient, getBalance } from './credits.js';
-import { stepCost, FULL_RUN_COST, costBreakdown } from './pricing.js';
+import {
+  stepCost,
+  FULL_RUN_COST,
+  costBreakdown,
+  costForStages,
+  STAGE_IDS,
+} from './pricing.js';
 
 const cfg = loadConfig();
 const baseProvider = defaultProviderConfig(cfg);
@@ -62,10 +68,22 @@ app.get('/api/stages', (c) =>
 );
 
 // Per-run pricing (with per-stage breakdown) so the UI can show the cost and
-// pre-check balance.
-app.get('/api/pricing', (c) =>
-  c.json({ runCost: FULL_RUN_COST, stages: costBreakdown() }),
-);
+// pre-check balance. `?stages=a,b` prices only that subset.
+app.get('/api/pricing', (c) => {
+  const raw = c.req.query('stages');
+  const picked = raw
+    ? raw
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => STAGE_IDS.includes(s))
+    : null;
+  const stages = costBreakdown();
+  return c.json({
+    runCost: costForStages(picked),
+    fullRunCost: FULL_RUN_COST,
+    stages,
+  });
+});
 
 // Suggest focused research topics from a broad direction. Free (no credits) —
 // it uses the user's own provider key, same as a run. Requires auth.
@@ -106,11 +124,30 @@ app.post('/api/topics/suggest', requireAuth, async (c) => {
 app.post('/api/runs', requireAuth, async (c) => {
   const user = c.get('user');
   const body = await c.req
-    .json<{ topic?: string; provider?: Partial<ProviderConfig> | null; language?: string }>()
-    .catch(() => ({}) as { topic?: string; provider?: Partial<ProviderConfig> | null; language?: string });
+    .json<{
+      topic?: string;
+      provider?: Partial<ProviderConfig> | null;
+      language?: string;
+      stages?: string[];
+    }>()
+    .catch(
+      () =>
+        ({} as {
+          topic?: string;
+          provider?: Partial<ProviderConfig> | null;
+          language?: string;
+          stages?: string[];
+        }),
+    );
 
   const topic = (body.topic ?? '').trim();
   if (!topic) return c.json({ error: 'topic is required' }, 400);
+
+  // Optional stage subset: unknown ids are dropped; if nothing valid remains we
+  // run the full pipeline (and charge for it), matching core's resolveStages.
+  const requested = Array.isArray(body.stages) ? body.stages : null;
+  const stages = requested ? requested.filter((s) => STAGE_IDS.includes(s)) : null;
+  const runCost = costForStages(stages && stages.length > 0 ? stages : null);
 
   const language = isOutputLanguage(body.language) ? body.language : 'auto';
 
@@ -126,10 +163,9 @@ app.post('/api/runs', requireAuth, async (c) => {
     return c.json({ error: 'Failed to init model: ' + (err as Error).message }, 400);
   }
 
-  // Gate on the full-run cost so a started run can always complete.
-  if (getBalance(user.id) < FULL_RUN_COST) {
+  if (getBalance(user.id) < runCost) {
     return c.json(
-      { error: '积分不足，请先充值', needCredits: true, cost: FULL_RUN_COST },
+      { error: '积分不足，请先充值', needCredits: true, cost: runCost },
       402,
     );
   }
@@ -157,7 +193,7 @@ app.post('/api/runs', requireAuth, async (c) => {
 
   // Fire-and-forget; events flow to SSE subscribers. A thrown error emits
   // run.error, which triggers the store's refund hook.
-  runPipeline({ ctx, llm, emit }).catch((err) => {
+  runPipeline({ ctx, llm, emit, stages: stages ?? undefined }).catch((err) => {
     store.emit(run, { type: 'run.error', message: (err as Error).message });
   });
 
@@ -166,7 +202,8 @@ app.post('/api/runs', requireAuth, async (c) => {
     provider: providerCfg.provider,
     model: providerCfg.model,
     credits: getBalance(user.id),
-    runCost: FULL_RUN_COST,
+    runCost,
+    stages: (stages && stages.length > 0 ? stages : STAGE_IDS),
   });
 });
 
@@ -174,8 +211,12 @@ app.post('/api/runs', requireAuth, async (c) => {
 // with archived terminal runs, newest first. Owner-only.
 app.get('/api/runs', requireAuth, (c) => {
   const userId = c.get('user').id;
+  const q = (c.req.query('q') ?? '').trim();
+  const limitRaw = Number(c.req.query('limit'));
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 200) : 50;
   const live: RunSummary[] = store
     .listFor(userId)
+    .filter((r) => !q || r.topic.toLowerCase().includes(q.toLowerCase()))
     .map((r) => ({
       id: r.id,
       topic: r.topic,
@@ -185,9 +226,22 @@ app.get('/api/runs', requireAuth, (c) => {
       source: 'live' as const,
     }));
   const seen = new Set(live.map((r) => r.id));
-  const archived = listArchivedRuns(userId).filter((r) => !seen.has(r.id));
+  const archived = listArchivedRuns(userId, limit, q).filter((r) => !seen.has(r.id));
   const all = [...live, ...archived].sort((a, b) => b.updatedAt - a.updatedAt);
-  return c.json({ runs: all });
+  return c.json({ runs: all, query: q });
+});
+
+// Delete an archived run. Live/running runs can't be deleted (they're still
+// streaming); wait for them to finish or reload the page. Owner-only.
+app.delete('/api/runs/:id', requireAuth, (c) => {
+  const id = c.req.param('id') ?? '';
+  const live = store.get(id);
+  if (live && live.userId === c.get('user').id && live.status === 'running') {
+    return c.json({ error: '运行仍在进行中，无法删除' }, 409);
+  }
+  const ok = deleteArchivedRun(id, c.get('user').id);
+  if (!ok) return c.json({ error: 'not found' }, 404);
+  return c.json({ ok: true, id });
 });
 
 // Snapshot of a run (status + all events so far). Falls back to the durable
