@@ -89,4 +89,30 @@ export const sectionWriter = defineAgent({
       data: sections,
     });
   },
+  // Degraded path: if every retry of the section writer fails (provider outage,
+  // persistent 5xx), we still assemble a structurally-complete draft so the
+  // downstream agents (weave / review / revise / title) and the QA gate have
+  // something to operate on — a blank draft would otherwise break the whole run.
+  async fallback({ ctx, emit }) {
+    const lang = ctx.language;
+    const note =
+      lang === 'zh'
+        ? '（待补充：本章节生成失败，已用降级占位填充，请人工复核）'
+        : lang === 'en'
+          ? '(TO FILL: this section failed to generate; a degraded placeholder was used — please review manually)'
+          : '（待补充：本章节生成失败，已用降级占位填充，请人工复核）';
+    const sections = ctx.outline.map((plan) => ({
+      id: plan.id,
+      title: plan.title,
+      content: note,
+    }));
+    ctx.draft = { title: '', abstract: '', sections, references: [] };
+    ctx.log.push(`section-writer(fallback): placeholder draft with ${sections.length} sections`);
+    emit({
+      type: 'agent.result',
+      agent: 'section-writer',
+      summary: `降级占位：${sections.length} 个空章节已生成，请人工复核。`,
+      data: sections,
+    });
+  },
 });

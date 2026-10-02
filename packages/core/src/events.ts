@@ -14,6 +14,12 @@ export type AgentEvent =
   | { type: 'agent.output'; agent: string; delta: string }
   | { type: 'agent.result'; agent: string; summary: string; data?: unknown }
   | { type: 'agent.error'; agent: string; message: string }
+  // A transient failure was retried (after `attempt` retries so far, waiting
+  // `delayMs` before the next attempt). Lets the UI show a "retrying" hint.
+  | { type: 'agent.retry'; agent: string; attempt: number; delayMs: number; message: string }
+  // All retries exhausted and the agent's `fallback` writer was used instead, so
+  // the section is filled with a degraded result rather than left blank.
+  | { type: 'agent.fallback'; agent: string; reason: string }
   | { type: 'agent.done'; agent: string }
   | { type: 'stage.done'; stage: StageId }
   // Post-draft quality report (structural + citation-integrity checks).

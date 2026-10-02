@@ -105,6 +105,37 @@ Both endpoints are owner-only (401 without a session, 404 for another user's run
   `LOWER(topic) LIKE`), with `?limit=` (capped at 200).
 - **Delete:** `DELETE /api/runs/:id` removes an archived run. A still-running run is
   refused with `409` — finish or reload first.
+- **Export:** `GET /api/runs/export?q=<关键词>` streams a ZIP of the signed-in user's runs
+  (owner-only). Each run becomes its own folder containing `run.json` (the raw event
+  snapshot + metadata) and `report.md` — a human-readable replay rebuilt from the event
+  stream (headings from `agent.start`, summaries from `agent.result`, the QA report from
+  `run.qa`). Empty result set returns `404`.
+
+**Rate limiting.** The run and export endpoints are guarded by an in-memory fixed-window
+limiter (`apps/server/src/rateLimit.ts`, default 30 req/min on `/api/runs*`, 10/min on
+`/api/topics/suggest`). Exceeding it returns `429` with a `Retry-After` header and
+`X-RateLimit-Limit` / `X-RateLimit-Remaining` response headers. CORS is already enabled for
+`/api/*` (`cors({ origin: (o) => o, credentials: true })`).
+
+## Resilience: retry & fallback
+
+A single transient failure — a network blip, a `429` rate-limit from the model provider, a
+`503` overload — must not blank out an entire section. Every agent run is wrapped in
+`withRetry` (`packages/core/src/retry.ts`, pure and fully unit-tested):
+
+- **Retryable errors** are classified by status (408/425/429/5xx), socket error code
+  (`ECONNRESET`, `ETIMEDOUT`, …) or provider message fragments (`rate limit`, `server
+  error`, `fetch failed`, …). Auth errors (`401`/`403`) and `4xx` client errors are *not*
+  retried — they mean the request was wrong, not the server hiccupped.
+- Retries use **exponential backoff with jitter** (base 600 ms, factor 2, cap 8 s, ±25%
+  jitter) to avoid a thundering herd. Default is 3 retries (≤4 attempts), derived per-agent
+  from the `retry` field on `Agent` (clamped to ≥1).
+- If every retry is exhausted and the agent defines a `fallback` writer, that degraded
+  writer fills in a safe placeholder so the draft still assembles; the `agent.fallback`
+  event records the reason. Without a fallback, the run emits `agent.error` as before.
+- The UI reflects this live: a retried agent shows a `↻ 重试 N` hint; a degraded agent
+  shows a **降级** (warn) badge and a "please review" note instead of looking silently
+  broken.
 
 ## Stage selection (run only what you need)
 
@@ -162,7 +193,10 @@ npm run test:watch
 
 Unit tests live in `packages/core/test/` and cover the pure, dependency-free parts of the
 framework: Markdown assembly (`draft.ts`), every Zod schema, the language-injection
-wrapper, the agent registry, and the pipeline shape (unique agent names, stage ownership).
+wrapper, the agent registry, the pipeline shape (unique agent names, stage ownership),
+the **QA gate** (`qa.test.ts`, structural + citation-integrity + anti-fabrication checks),
+and the **retry/backoff engine** (`retry.test.ts`, error classification, jittered backoff,
+attempt counting). Run with `npm test` (vitest) — the full suite is currently 71 tests.
 
 ## Paid layer — accounts, credits, payments
 

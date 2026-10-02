@@ -19,6 +19,8 @@ import {
 import type { TimestampedEvent, ProviderConfig } from '@ars/core';
 import { RunStore } from './runStore.js';
 import { archiveRun, listArchivedRuns, getArchivedRun, deleteArchivedRun, type RunSummary } from './runArchive.js';
+import { rateLimit } from './rateLimit.js';
+import { buildRunsZip } from './export.js';
 import { authRoutes } from './routes/auth.js';
 import { billingRoutes } from './routes/billing.js';
 import { requireAuth, type AuthVars } from './auth.js';
@@ -41,6 +43,13 @@ const app = new Hono<{ Variables: AuthVars }>();
 // CORS must allow credentials so the session cookie flows on same-origin/proxied
 // requests. In dev, Vite proxies /api to this server so it stays same-origin.
 app.use('/api/*', cors({ origin: (o) => o, credentials: true }));
+
+// Ops hardening: throttle the expensive / state-changing endpoints so a single
+// client can't hammer the LLM provider or the ZIP exporter. Keyed by client IP,
+// enforced before auth so an unauthenticated flood is still capped.
+app.use('/api/runs', rateLimit({ windowMs: 60_000, max: 30 }));
+app.use('/api/runs/*', rateLimit({ windowMs: 60_000, max: 30 }));
+app.use('/api/topics/suggest', rateLimit({ windowMs: 60_000, max: 10 }));
 
 app.route('/api/auth', authRoutes);
 app.route('/api/billing', billingRoutes);
@@ -242,6 +251,21 @@ app.delete('/api/runs/:id', requireAuth, (c) => {
   const ok = deleteArchivedRun(id, c.get('user').id);
   if (!ok) return c.json({ error: 'not found' }, 404);
   return c.json({ ok: true, id });
+});
+
+// Bulk export of the user's history as a ZIP — each run becomes a folder with
+// `run.json` (raw events + metadata) and `report.md` (readable replay). Owner-only;
+// honors the same topic search as the history list. Throttled by the /api/runs limiter.
+app.get('/api/runs/export', requireAuth, async (c) => {
+  const userId = c.get('user').id;
+  const q = (c.req.query('q') ?? '').trim();
+  const { buffer, count } = await buildRunsZip(userId, q || undefined);
+  if (count === 0) return c.json({ error: '没有可导出的历史运行' }, 404);
+  const fname = `ars-runs-${new Date().toISOString().slice(0, 10)}.zip`;
+  return c.body(buffer as unknown as ArrayBuffer, 200, {
+    'Content-Type': 'application/zip',
+    'Content-Disposition': `attachment; filename="${fname}"`,
+  });
 });
 
 // Snapshot of a run (status + all events so far). Falls back to the durable

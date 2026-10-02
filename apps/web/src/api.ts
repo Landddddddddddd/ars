@@ -136,6 +136,26 @@ export async function deleteRun(id: string): Promise<boolean> {
   return r.ok;
 }
 
+/** Download the user's archived history as a ZIP (run.json + report.md per run). */
+export async function exportRuns(query?: string): Promise<void> {
+  const url = query
+    ? `/api/runs/export?q=${encodeURIComponent(query)}`
+    : '/api/runs/export';
+  const r = await fetch(url, { credentials: 'include' });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new ApiError(j.error ?? '导出失败', r.status);
+  }
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ars-runs-${new Date().toISOString().slice(0, 10)}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+}
+
 export interface RunSnapshot {
   id: string;
   topic: string;

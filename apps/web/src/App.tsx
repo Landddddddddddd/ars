@@ -9,6 +9,7 @@ import {
   fetchRuns,
   fetchRun,
   deleteRun,
+  exportRuns,
   type TEvent,
   type QAIssue,
   type ProviderPreset,
@@ -147,6 +148,14 @@ export function App() {
     [status, historyQuery, loadHistory],
   );
 
+  const exportHistory = useCallback(async () => {
+    try {
+      await exportRuns(historyQuery || undefined);
+    } catch (err) {
+      alert((err as Error).message);
+    }
+  }, [historyQuery]);
+
   const openRun = useCallback(
     async (id: string) => {
       if (status === 'running') return;
@@ -239,6 +248,16 @@ export function App() {
           break;
         case 'agent.error':
           patch(e.agent, (a) => ({ ...a, status: 'error', error: e.message }));
+          break;
+        // A transient failure was retried — bump the visible retry counter so the
+        // card shows a "↻ 重试 N" hint instead of looking stuck.
+        case 'agent.retry':
+          patch(e.agent, (a) => ({ ...a, retries: (a.retries ?? 0) + 1 }));
+          break;
+        // All retries failed and the agent's degraded fallback was used. Keep the
+        // card visible with a warning so the user knows to review that section.
+        case 'agent.fallback':
+          patch(e.agent, (a) => ({ ...a, status: 'warn', degraded: true, error: `已降级：${e.reason}` }));
           break;
         case 'agent.done':
           patch(e.agent, (a) => (a.status === 'error' ? a : { ...a, status: 'done' }));
@@ -429,6 +448,14 @@ export function App() {
               />
               <button className="paper-btn" onClick={() => loadHistory(historyQuery || undefined)}>
                 搜索
+              </button>
+              <button
+                className="paper-btn"
+                onClick={exportHistory}
+                disabled={status === 'running'}
+                title="把当前搜索结果（或全量）历史导出为 ZIP（run.json + report.md）"
+              >
+                导出 ZIP
               </button>
               {historyQuery && (
                 <button

@@ -408,6 +408,23 @@ header .sub {
   margin-top: 8px;
   color: var(--red);
 }
+.retry-badge {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--amber);
+  border: 1px solid var(--amber);
+  background: rgba(251, 191, 36, 0.08);
+}
+.warn {
+  margin-top: 8px;
+  color: var(--amber);
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
 
 .result {
   margin: 10px 0 0;

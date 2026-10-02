@@ -21,6 +21,10 @@ export type {
 export { defineAgent } from './agent.js';
 export type { Agent, AgentRunArgs } from './agent.js';
 
+// Resilient agent execution (retry + backoff + fallback classification).
+export { withRetry, isRetryableError, backoffDelay } from './retry.js';
+export type { RetryOptions } from './retry.js';
+
 export { createContext } from './context.js';
 export type { ResearchContext } from './context.js';
 

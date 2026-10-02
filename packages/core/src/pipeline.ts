@@ -2,6 +2,7 @@ import type { LLMClient } from './providers/types.js';
 import type { ResearchContext } from './context.js';
 import { withLanguage } from './language.js';
 import { checkDraft, draftStats } from './qa.js';
+import { withRetry } from './retry.js';
 import type { Agent } from './agent.js';
 import type { AgentEvent, StageId } from './events.js';
 import {
@@ -88,14 +89,30 @@ async function runStage(
   emit({ type: 'stage.start', stage: stage.id, title: stage.title });
   for (const agent of stage.agents) {
     emit({ type: 'agent.start', agent: agent.name, title: agent.title, stage: agent.stage });
+    // Resilience: a single transient failure (network / 429 / 5xx / timeout)
+    // should not blank out a whole section. Retry those with backoff; if every
+    // retry fails, fall back to the agent's degraded writer when provided.
+    const maxAttempts = Math.max(1, agent.retry ?? 3);
     try {
-      await agent.run({ ctx, llm, emit });
-    } catch (err) {
-      emit({
-        type: 'agent.error',
-        agent: agent.name,
-        message: (err as Error).message ?? String(err),
+      await withRetry(() => agent.run({ ctx, llm, emit }), {
+        retries: maxAttempts - 1,
+        baseDelayMs: 600,
+        maxDelayMs: 8000,
+        onRetry: ({ attempt, error, delayMs }) =>
+          emit({ type: 'agent.retry', agent: agent.name, attempt, delayMs, message: error.message }),
       });
+    } catch (err) {
+      const message = (err as Error).message ?? String(err);
+      if (agent.fallback) {
+        try {
+          await agent.fallback({ ctx, llm, emit });
+          emit({ type: 'agent.fallback', agent: agent.name, reason: message });
+        } catch {
+          emit({ type: 'agent.error', agent: agent.name, message });
+        }
+      } else {
+        emit({ type: 'agent.error', agent: agent.name, message });
+      }
     }
     emit({ type: 'agent.done', agent: agent.name });
   }

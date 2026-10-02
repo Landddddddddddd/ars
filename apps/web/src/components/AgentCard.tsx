@@ -3,12 +3,16 @@ import { useState } from 'react';
 export interface AgentState {
   name: string;
   title: string;
-  status: 'pending' | 'running' | 'done' | 'error';
+  status: 'pending' | 'running' | 'done' | 'error' | 'warn';
   thinking: string;
   output: string;
   summary?: string;
   data?: unknown;
   error?: string;
+  /** How many times this agent has been retried after a transient failure. */
+  retries?: number;
+  /** True when the agent failed all retries and a degraded fallback was used. */
+  degraded?: boolean;
 }
 
 const STATUS_LABEL: Record<AgentState['status'], string> = {
@@ -16,6 +20,7 @@ const STATUS_LABEL: Record<AgentState['status'], string> = {
   running: '运行中',
   done: '完成',
   error: '错误',
+  warn: '降级',
 };
 
 export function AgentCard({ agent }: { agent: AgentState }) {
@@ -29,9 +34,13 @@ export function AgentCard({ agent }: { agent: AgentState }) {
         <span className="card-title">{agent.title}</span>
         <span className="card-name">{agent.name}</span>
         <span className={`badge ${agent.status}`}>{STATUS_LABEL[agent.status]}</span>
+        {agent.retries ? <span className="retry-badge" title="瞬时失败后正在重试">↻ 重试 {agent.retries}</span> : null}
       </div>
 
       {agent.error && <div className="err">✗ {agent.error}</div>}
+      {agent.degraded && (
+        <div className="warn">⚠ 该步多次失败后已用降级结果填充，请人工复核。</div>
+      )}
 
       {agent.thinking && (
         <div className="thinking">

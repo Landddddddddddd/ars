@@ -23,6 +23,19 @@ export interface Agent {
   role: string;
   /** Preferred reasoning effort for this agent's calls. */
   effort?: Effort;
+  /**
+   * Max total attempts for this agent's `run` (first try + retries). Default 3.
+   * Only transient errors (network / 429 / 5xx / timeouts) are retried; a bad
+   * request or auth failure fails fast. Overrides the pipeline default.
+   */
+  retry?: number;
+  /**
+   * Degraded writer used only if every retry is exhausted. It should write a
+   * safe placeholder so the section doesn't go blank and break downstream agents,
+   * rather than throwing. Optional — without it a failed agent just emits
+   * `agent.error` and the pipeline continues.
+   */
+  fallback?: (args: AgentRunArgs) => Promise<void>;
   run(args: AgentRunArgs): Promise<void>;
 }
 
